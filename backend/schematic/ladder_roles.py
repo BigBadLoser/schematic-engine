@@ -608,6 +608,23 @@ def classify(intent: SchematicIntent, pin_counts: Mapping[str, int]) -> Roles:
     pair_set: set[tuple[str, str]] = set()
     consumed: set[str] = set(chain_refs)
 
+    # A tap: a one-pin part (a test point, a single-pin connector) on a signal net that other pins share.  It hangs from that
+    # net's wire, its pin facing the wire, the attachment of a part with no rail (``rail`` is empty).
+    for ref in sorted(symbols):
+        if ref in consumed or pin_counts.get(ref) != 1:
+            continue
+        joined = [net for net in nets if any(ep.reference == ref for ep in net.endpoints)]
+        if len(joined) != 1 or joined[0].name in rails or len(set(net_symbols[joined[0].name]) - {ref}) < 1:
+            continue
+        candidates = [candidate for candidate in net_symbols[joined[0].name] if candidate in chain_refs]
+        if candidates:
+            host = min(candidates, key=lambda candidate: (chain_ref_order[candidate], candidate))
+        else:
+            others = [candidate for candidate in net_symbols[joined[0].name] if candidate != ref]
+            host = min(others, key=lambda candidate: (-int(pin_counts.get(candidate, 0)), candidate))
+        attachments[ref] = Attachment(host, joined[0].name, "", "supply")
+        consumed.add(ref)
+
     for ref in sorted(symbols):
         if ref in consumed or pin_counts.get(ref, 0) < 2:
             continue

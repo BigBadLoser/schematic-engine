@@ -18,7 +18,7 @@ from dataclasses import replace
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
-from .designators import is_source_reference
+from .designators import is_source_reference, split_unit
 from .ladder_plan import GroupRecord, LayoutRecord, NoRecord, StackRecord
 from .orientation import Orientation
 from .placement_refinement import Connection, Placement, PlacedSymbol, OrientedGeometry, GRID_MM, estimate_net
@@ -398,29 +398,74 @@ def ladder_layout(
                        for r, _pin in pins if r == ref})
         and kinds == {True}
     ]
-    lone_refs = [ref for block in lone_blocks for ref in chains[block]] + [ref for ref in rail_only_others if ref not in placed]
+    # A unit of a multi-unit part whose pins are all on rails (an op-amp power unit) stands beside a placed unit of the same
+    # part, as people draw it, not in the supply column.
+    def sibling_of(ref: str) -> str | None:
+        part, unit = split_unit(ref)
+        if unit is None:
+            return None
+        return next((other for other in sorted(placed) if other != ref and split_unit(other)[0] == part), None)
+
+    beside_refs = [ref for ref in rail_only_others if ref not in placed and sibling_of(ref) is not None]
+    lone_refs = ([ref for block in lone_blocks for ref in chains[block]]
+                 + [ref for ref in rail_only_others if ref not in placed and ref not in beside_refs])
+    level = {"supply": 2, "ground": 1, "negative": 0}
+
+    def rail_choice(ref: str) -> tuple[Orientation, OrientedGeometry]:
+        """The orientation of a part whose pins are on rails: vertical, the pin of the higher rail up."""
+        pin_kind = {pin: roles.rails.get(name) for name, pins in pins_by_net.items() for r, pin in pins if r == ref}
+
+        def lone_key(item):
+            orientation, geometry = item
+            ys = [pg.point[1] for pg in geometry.pins.values()]
+            xs = [pg.point[0] for pg in geometry.pins.values()]
+            vertical = (max(ys) - min(ys)) > (max(xs) - min(xs))
+            # the pin of the higher rail points up: supply over ground over a negative rail
+            ranked = [(level[pin_kind[pin]], pg.point[1]) for pin, pg in geometry.pins.items()
+                      if pin_kind.get(pin) in level]
+            wrong = int(any(a > b and ya > yb for a, ya in ranked for b, yb in ranked))
+            return (not vertical, wrong, orientation.rotation, orientation.mirror)
+
+        return min(by_ref[ref].geometry.items(), key=lone_key)
+
+    for ref in beside_refs:
+        sibling = sibling_of(ref)
+        orientation, geometry = rail_choice(ref)
+        sib_box = box_of(sibling, placed[sibling])
+        stub = max(slot_pitch_mm, 2 * gap_mm) + gap_mm          # the power symbols above and below the unit need room
+        others = [core_box(r, pl) for r, pl in placed.items()]
+        core = _core(geometry)
+        middle = (sib_box[1] + sib_box[3]) / 2 - (geometry.box[1] + geometry.box[3]) / 2
+        found = None
+        for step in range(60):                                      # to the right of the sibling, then to its left
+            for side in (1, -1):
+                if side > 0:
+                    x = sib_box[2] + 2 * gap_mm + step * 2 * GRID_MM - geometry.box[0]
+                else:
+                    x = sib_box[0] - 2 * gap_mm - step * 2 * GRID_MM - geometry.box[2]
+                anchor = (snap(x), snap(middle))
+                grown = (anchor[0] + core[0] - gap_mm, anchor[1] + core[1] - stub,
+                         anchor[0] + core[2] + gap_mm, anchor[1] + core[3] + stub)
+                if not any(grown[0] < o[2] - _EPS and o[0] < grown[2] - _EPS and grown[1] < o[3] - _EPS and o[1] < grown[3] - _EPS
+                           for o in others):
+                    found = anchor
+                    found_side = side
+                    break
+            if found is not None:
+                break
+        if found is None:
+            lone_refs.append(ref)              # no room beside it: the supply column
+            continue
+        placed[ref] = Placement(found, orientation)
+        if record is not None:
+            record.beside[ref] = (sibling, orientation, found_side)
     if lone_refs:
         first = results[0]
         top = min((box_of(ref, pl)[1] for ref, pl in first.items()), default=0.0)
         left = left if left is not None else 0.0
-        level = {"supply": 2, "ground": 1, "negative": 0}
         chosen: list[tuple[str, Orientation, OrientedGeometry]] = []
         for ref in lone_refs:
-            symbol = by_ref[ref]
-            pin_kind = {pin: roles.rails.get(name) for name, pins in pins_by_net.items() for r, pin in pins if r == ref}
-
-            def lone_key(item, pin_kind=pin_kind):
-                orientation, geometry = item
-                ys = [pg.point[1] for pg in geometry.pins.values()]
-                xs = [pg.point[0] for pg in geometry.pins.values()]
-                vertical = (max(ys) - min(ys)) > (max(xs) - min(xs))
-                # the pin of the higher rail points up: supply over ground over a negative rail
-                ranked = [(level[pin_kind[pin]], pg.point[1]) for pin, pg in geometry.pins.items()
-                          if pin_kind.get(pin) in level]
-                wrong = int(any(a > b and ya > yb for a, ya in ranked for b, yb in ranked))
-                return (not vertical, wrong, orientation.rotation, orientation.mirror)
-
-            orientation, geometry = min(symbol.geometry.items(), key=lone_key)
+            orientation, geometry = rail_choice(ref)
             chosen.append((ref, orientation, geometry))
         if record is not None:
             record.lone = [(ref, orientation) for ref, orientation, _geometry in chosen]
@@ -1297,7 +1342,7 @@ def _place_group(
                 if in_pin is not None:
                     terminal_input_net = next(name for name in pins_by_net
                                               if name not in roles.rails and net_pin(ref, name) == in_pin)
-            if multi and out_pin is None:
+            if multi and out_pin is None and not (index == len(chain) - 1 and in_pin is not None and _is_one_sided(symbol)):
                 out_pin = infer_terminal_pin(ref, earlier or terminal_input_net, 1, prefer_feedback=True)
                 if out_pin is not None:
                     terminal_output_net = next(name for name in pins_by_net
@@ -1377,6 +1422,9 @@ def _place_group(
             def chain_candidate(o, g):
                 if source_upright:
                     return source_candidate(o, g)
+                if one_sided and at_end and multi:
+                    # a connector at the end of a row has its pins toward the circuit (an output connector's point left)
+                    return faces_circuit(g) and (rails_beyond_chain_pin(g) or not rails_fit)
                 if multi:
                     if best_flow < 2:
                         return flow_score(g) == best_flow
@@ -1955,8 +2003,8 @@ def _place_group(
     def place_attachment(ref: str, attachment, lane_start: tuple[float, int] | None = None, far_first: bool = False) -> None:
         if ref not in by_ref or attachment.net not in net_by_name:
             return
-        rail_pin = net_pin(ref, attachment.rail)
         signal_pin = net_pin(ref, attachment.net)
+        rail_pin = net_pin(ref, attachment.rail) if attachment.rail else signal_pin      # a tap has no rail pin
         if rail_pin is None or signal_pin is None:
             return
         if attachment.net in led_nets and attachment.net not in cleared:
@@ -1975,8 +2023,8 @@ def _place_group(
             if signal_pin not in g.pins or rail_pin not in g.pins:
                 return False
             signal, rail = g.pins[signal_pin], g.pins[rail_pin]
-            if len(g.pins) > 2:
-                # a clamp (a dual diode with its rails left and right): its signal pin points at the wire, the body beyond it
+            if len(g.pins) > 2 or not attachment.rail:
+                # a tap (a one-pin part) or a clamp (a dual diode with its rails left and right): its signal pin points at the wire, the body beyond it
                 body = g.body if g.body is not None else g.box
                 return (abs(signal.normal[0]) < .5 and signal.normal[1] * side_sign < -.5
                         and (body[1] >= signal.point[1] - _EPS if side_sign > 0 else body[3] <= signal.point[1] + _EPS))

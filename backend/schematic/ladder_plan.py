@@ -298,6 +298,7 @@ class LayoutRecord:
     # lack it) instead of raising: the decisions after the failure are still worth having as a plan.
     partial: bool = False
     pair_stacks: list[StackRecord] = field(default_factory=list)                  # stacked pairs, left to right
+    beside: dict[str, tuple[str, Orientation, int]] = field(default_factory=dict)      # a power unit -> (the placed unit it stands beside, orientation, +1 right of it or -1 left)
 
 
 def plan_from_record(record: LayoutRecord, symbols: Sequence["PlacedSymbol"], nets: Sequence["Connection"]) -> Plan:
@@ -407,6 +408,26 @@ def plan_from_record(record: LayoutRecord, symbols: Sequence["PlacedSymbol"], ne
             continue
         named.append(Row(row.name, row.kind, above, row.order))
         above = row.name
+    sequence_groups = [list(group) for group in sequence]
+    # A power unit stands beside a unit of its part: in that unit's row when the unit is at an end of it (a wire runs between
+    # two parts of a row and the unit must not stand on it), else with the supplies at the left.
+    for ref, (sibling, orientation, _side) in sorted(record.beside.items()):
+        orientations[ref] = orientation
+        pins[ref] = ""
+        for index, row in enumerate(named):
+            if row.kind == "chain" and sibling in row.order and row.order.index(sibling) in (0, len(row.order) - 1):
+                after = row.order.index(sibling) != 0 or len(row.order) == 1
+                where = row.order.index(sibling) + (1 if after else 0)
+                named[index] = Row(row.name, row.kind, row.above, row.order[:where] + (ref,) + row.order[where:])
+                for group in sequence_groups:
+                    if sibling in group:
+                        group.insert(group.index(sibling) + (1 if after else 0), ref)
+                        break
+                break
+        else:
+            pins.pop(ref, None)
+            columns.append(Column("", (ref,), (orientation,)))
+    sequence = [tuple(group) for group in sequence_groups]
     return Plan(
         rows=tuple(named),
         hangs=tuple(sorted(hangs, key=lambda h: (h.wire, h.side, h.host, h.rank, h.reference))),
