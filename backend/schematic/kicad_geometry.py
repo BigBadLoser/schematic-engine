@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from .designators import unit_reference
 from .presentation_geometry import (
     Bounds, GeometryItem, GeometryKind as K, GeometryScene, flagged_label_bounds, label_text_bounds,
 )
@@ -302,6 +303,14 @@ def measured_scene_from_kicad(
     unknown_libraries: set[str] = set()
     missing_symbol_graphics = 0
 
+    # a part drawn in several units is one symbol per unit under one reference: each is named ``U5:2`` here (spec 4c), so its
+    # body, pins and fields are its own and the placeable names of the layout find them
+    instances: Counter[str] = Counter()
+    for candidate in _children(doc, "symbol"):
+        candidate_ref = _property(candidate, "Reference")
+        if candidate_ref is not None and not str(_one(candidate, "lib_id")[1] if _one(candidate, "lib_id") else "").startswith("power:"):
+            instances[str(candidate_ref[2])] += 1
+
     for index, symbol in enumerate(_children(doc, "symbol")):
         lib = _one(symbol, "lib_id")
         at = _one(symbol, "at")
@@ -316,6 +325,8 @@ def measured_scene_from_kicad(
         mirror = str(mirror_node[1]) if mirror_node and len(mirror_node) > 1 else None
         u = _one(symbol, "unit")
         unit = int(u[1]) if u else 1
+        if instances.get(ref, 0) > 1 and not is_power:
+            ref = unit_reference(ref, unit)
         definition = definitions.get(library_id)
         if definition is None:
             unknown_libraries.add(library_id)

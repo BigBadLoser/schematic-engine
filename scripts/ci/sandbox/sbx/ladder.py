@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
@@ -273,22 +274,39 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
             clocks += f"; deterministic {deterministic}"
         return (result.placements, f"solver cpsat: {result.status}" + (f" ({clocks})" if clocks else ""),
                 getattr(result.placements, "wires", None) or None)
-    return _ladder_functions()[1](widened, nets, roles, text_widths=text_widths(intent)), "ladder", None
+    layout = _ladder_functions()[1]
+    try:
+        return layout(widened, nets, roles, text_widths=text_widths(intent)), "ladder", None
+    except ValueError as error:
+        if "No attachment slot" not in str(error):
+            raise
+    # a part the heuristic finds no slot for is left out of the placement (the caller leaves it with the ``other`` parts)
+    from backend.schematic.ladder_plan import LayoutRecord
+    return layout(widened, nets, roles, text_widths=text_widths(intent), record=LayoutRecord(partial=True)), "ladder", None
+
+
+def _layout(symbols: list[Any], nets: list[Any], intent: Any, roles: Any,
+            name: str = "") -> tuple[list[Any], str, Any, list[str]]:
+    """``layout_step`` and the references the placement left out (a part a partial plan found no slot for), which the caller
+    leaves where they are like the parts the roles call ``other``."""
+    widened = all_orientations(symbols)
+    placements, note, wires = _placements(widened, nets, intent, roles, name)
+    moved, left_out = [], []
+    # The widened symbols are returned, not the recorded ones: the orientation the ladder chose must be in the
+    # symbol's geometry for the placement model to score it.
+    for symbol in widened:
+        place = placements.get(symbol.reference)
+        moved.append(replace(symbol, position=place.position, orientation=place.orientation) if place else symbol)
+        if place is None and not symbol.reference.startswith("#") and symbol.reference not in (roles.other if roles else ()):
+            left_out.append(symbol.reference)
+    return moved, note, wires, left_out
 
 
 def layout_step(symbols: list[Any], nets: list[Any], intent: Any, roles: Any,
                 name: str = "") -> tuple[list[Any], str, Any]:
     """``ladder_layout_step``, the note on where the positions came from (``ladder`` for the heuristic placer), and the wires
     the source drew (see ``_placements``), which ``describe`` scores in place of the plan's re-derivation of those nets."""
-    widened = all_orientations(symbols)
-    placements, note, wires = _placements(widened, nets, intent, roles, name)
-    moved = []
-    # The widened symbols are returned, not the recorded ones: the orientation the ladder chose must be in the
-    # symbol's geometry for the placement model to score it.
-    for symbol in widened:
-        place = placements.get(symbol.reference)
-        moved.append(replace(symbol, position=place.position, orientation=place.orientation) if place else symbol)
-    return moved, note, wires
+    return _layout(symbols, nets, intent, roles, name)[:3]
 
 
 def ladder_layout_step(symbols: list[Any], nets: list[Any], intent: Any, roles: Any, name: str = "") -> list[Any]:
@@ -301,9 +319,20 @@ def ladder_pose(symbols: list[Any], nets: list[Any], intent: Any, name: str = ""
     """The symbols as the ladder placer puts them; unchanged, with a stand-in note, when its modules are absent."""
     if _ladder_functions() is None:
         return LadderResult(list(symbols), None, STAND_IN)
+    intent = expand_for(symbols, intent)
     try:
         roles = roles_for(symbols, intent)
-        moved, note, wires = layout_step(symbols, nets, intent, roles, name)
+        moved, note, wires, left_out = _layout(symbols, nets, intent, roles, name)
+        # a part the layout left out stands with the ``other`` parts, below the placed ones; a unit placeable the layout did place
+        # (the power unit of an op-amp, in the supply column) stays where the layout put it
+        from backend.schematic.designators import split_unit
+        placed_units = {r for r in roles.other if split_unit(r)[1] is not None and r not in left_out}
+        if left_out or placed_units:
+            other = tuple(sorted({*roles.other, *left_out} - placed_units))
+            try:
+                roles = replace(roles, other=other)
+            except TypeError:          # roles that are not a dataclass (a stand-in): the same fields with the new ``other``
+                roles = SimpleNamespace(**{**vars(roles), "other": other})
     except Exception as error:
         raise type(error)(f"{name or 'circuit'}: {error}") from error
     return LadderResult(moved, roles, note, wires)
@@ -546,55 +575,32 @@ def run(run_dir: Path, circuits: list[str], *, engine: bool, out_dir: Path, pick
 # ---------------------------------------------------------------------------------------------------------------------
 # an intent with no engine run: geometry from the MCP server, the nets from the placement plan
 
-def merge_units(payload: dict[str, Any], units: dict[str, list[str]]) -> dict[str, Any]:
-    """A multi-unit part as one symbol: the pins of its other units (asked for as ``U5~2``, ...) are set beside the first
-    unit's body, in each orientation, and the extra entries dropped. The units of a part share one drawing area in the
-    library, so left where they are the pins of one would lie on those of another."""
-    symbols = dict(payload["symbols"])
-    for reference, extras in units.items():
-        base = symbols.get(reference)
-        if base is None:
-            continue
-        offset = 0.0
-        for extra in extras:
-            added = symbols.pop(extra, None)
-            if added is None:
-                continue
-            by_orientation = {(o["rotation"], o["mirror"]): o for o in added["orientations"]}
-            width = 0.0
-            for item in base["orientations"]:
-                other = by_orientation.get((item["rotation"], item["mirror"]))
-                if other is None:
-                    continue
-                body = item.get("body") or item["box"]
-                width = body[2] - body[0]
-                shift = offset + width + 2.54
-                for pin, (x, y, nx, ny) in other["pins"].items():
-                    item["pins"][pin] = [round(x + shift, 4), y, nx, ny]
-                box = other["box"]
-                item["box"] = [
-                    min(item["box"][0], box[0] + shift), min(item["box"][1], box[1]),
-                    max(item["box"][2], box[2] + shift), max(item["box"][3], box[3]),
-                ]
-                if "body" in item and "body" in other:
-                    b = other["body"]
-                    item["body"] = [
-                        min(item["body"][0], b[0] + shift), min(item["body"][1], b[1]),
-                        max(item["body"][2], b[2] + shift), max(item["body"][3], b[3]),
-                    ]
-            offset += width + 2.54
-    return {**payload, "symbols": symbols}
+def unit_pins_of(symbols: list[Any]) -> dict[str, dict[int, set[str]]]:
+    """The pins each unit placeable (``U5:2``) in ``symbols`` draws, by part and unit."""
+    from backend.schematic.designators import split_unit
+
+    found: dict[str, dict[int, set[str]]] = {}
+    for symbol in symbols:
+        part, unit = split_unit(symbol.reference)
+        if unit is not None:
+            found.setdefault(part, {})[unit] = set(symbol.geometry[symbol.orientation].pins)
+    return found
 
 
-def symbols_and_nets(
-    intent: Any, payload: dict[str, Any], units: dict[str, list[str]] | None = None,
-) -> tuple[list[Any], list[Any], dict, dict]:
+def expand_for(symbols: list[Any], intent: Any) -> Any:
+    """The intent with every multi-unit part the ``symbols`` hold as units (``U5:1``, ``U5:2``) turned into one symbol per
+    unit (``intent.expand_units``): what the roles, the plan and the layout work on. An intent that has none is returned as it is."""
+    from backend.schematic.intent import expand_units
+
+    return expand_units(intent, unit_pins_of(symbols))
+
+
+def symbols_and_nets(intent: Any, payload: dict[str, Any]) -> tuple[list[Any], list[Any], dict, dict]:
     """The placed symbols (every orientation the server described, mirrors only for parts of three or more pins, all at the
     origin: where the human put them is not an input), the connections, and the room in front of each pin, as
     ``placement_plan`` derives them from an intent."""
     from backend.schematic import placement_plan as plan
 
-    payload = merge_units(payload, units or {})
     references = [s.reference for s in intent.symbols if not s.authoring_auxiliary]
     missing = [r for r in references if r not in payload["symbols"]]
     if missing:
@@ -623,9 +629,12 @@ def corpus_inputs(entry: Any, built: Any, work_dir: Path, client: Any = None) ->
     sheet = corpus.sheet_file(entry)
     copy, units, _where = corpus.prepare_project(sheet, Path(work_dir), env.find_symbol_dir(env.find_kicad_cli()))
     references = [s.reference for s in built.intent.symbols]
+    # a multi-unit part is asked for unit by unit (``U5:1``, ``U5:2``): each is a placeable of its own (spec 4c)
+    asked = {reference: [f"{reference}:{unit}" for unit in units[reference]] if reference in units else [reference]
+             for reference in references}
     wanted = {
-        reference: [{"rotation": r, "mirror": m} for r in ROTATIONS for m in MIRRORS]
-        for reference in [*references, *(u for r in references for u in units.get(r, ()))]
+        name: [{"rotation": r, "mirror": m} for r in ROTATIONS for m in MIRRORS]
+        for names in asked.values() for name in names
     }
     if client is None:
         from backend.kicad.mcp_inprocess import McpInProcessClient
@@ -641,7 +650,13 @@ def corpus_inputs(entry: Any, built: Any, work_dir: Path, client: Any = None) ->
         str(work_dir), sch_file=str(copy), name="sch_symbol_geometry",
         arguments={"references": list(wanted), "orientations": wanted},
     )
-    return symbols_and_nets(built.intent, json.loads(result["result"]), units)
+    payload = json.loads(result["result"])
+    from backend.schematic.intent import expand_units
+    unit_pins = {
+        reference: {int(name.rpartition(":")[2]): set(payload["symbols"][name]["orientations"][0]["pins"]) for name in names}
+        for reference, names in asked.items() if reference in units
+    }
+    return symbols_and_nets(expand_units(built.intent, unit_pins), payload)
 
 
 _WIRE = re.compile(r"\(wire\s*\(pts\s*\(xy\s+(-?[\d.]+)\s+(-?[\d.]+)\)\s*\(xy\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
@@ -722,6 +737,7 @@ def fixture_document(
     from backend.schematic.ladder_plan import plan_and_layout
 
     widened = all_orientations(symbols)
+    intent = expand_for(symbols, intent)
     roles = roles_for(symbols, intent)
     widths = text_widths(intent)
     plan, placed = plan_and_layout(widened, nets, roles, text_widths=widths, partial=True)

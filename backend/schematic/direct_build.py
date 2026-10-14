@@ -13,6 +13,7 @@ and captions are written by ``_place_fields`` itself, so their time is in ``fiel
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,13 +22,35 @@ from backend.kicad.transaction import SchematicFileTransaction
 
 from . import timing
 from .connectivity import verify_intent_netlist
-from .intent import SchematicIntent
+from .designators import split_unit, unit_reference
+from .intent import SchematicIntent, SymbolIntent, expand_units
 from .kicad_geometry import measured_scene_from_kicad
 from .placement_refinement import Placement
 from .direct_workflow import SchematicWorkflowResult
 
 PROFILE = "compact"
 MARGIN_MM = 12.7           # the margin the trial loop translates the sheet to after placing parts
+
+
+def _symbol_entries(item: SymbolIntent, units_of: Mapping[str, list[int]]) -> list[dict[str, Any]]:
+    """The symbols ``sch_build_circuit`` is given for ``item``: one, or one per unit when the part is placed in units."""
+    if item.reference not in units_of:
+        return [item.to_mcp()]
+    return [replace(item, reference=unit_reference(item.reference, unit)).to_mcp() for unit in units_of[item.reference]]
+
+
+def _unit_pins(
+    workflow: Any, root: Path, schematic_file: Path, units_of: Mapping[str, list[int]],
+) -> dict[str, dict[int, set[str]]]:
+    """The pins each unit of each multi-unit part draws, as the server reports them (``sch_symbol_geometry`` of ``U5:2``)."""
+    names = [unit_reference(part, unit) for part, units in units_of.items() for unit in units]
+    reply = workflow._read(root, schematic_file, "sch_symbol_geometry", {"references": names})
+    payload = json.loads(reply["result"]) if isinstance(reply.get("result"), str) else reply
+    symbols = payload["symbols"]
+    return {
+        part: {unit: set(symbols[unit_reference(part, unit)]["orientations"][0]["pins"]) for unit in units}
+        for part, units in units_of.items()
+    }
 
 
 def _apply_placement(
@@ -51,7 +74,7 @@ def _apply_placement(
     for reference in sorted(placed):
         position = placed[reference].position
         written = workflow._write(
-            root, schematic_file, "sch_move_symbol",
+            root, schematic_file, "sch_move_unit" if split_unit(reference)[1] is not None else "sch_move_symbol",
             {"reference": reference, "x_mm": position[0], "y_mm": position[1], "snap_to_grid": True},
         )
         workflow._assert_authoring_result(f"direct placement {reference}", written)
@@ -164,8 +187,18 @@ def build_direct(
         raise RuntimeError("MCP Pro schematic workflow is unavailable")
     timing.reset()
     state: dict[str, Any] = {}
+    # A multi-unit part is placed unit by unit (spec 4c): the placement names its units (``U5:1``, ``U5:2``); a single-unit
+    # circuit has none, and nothing below differs from a build of plain references.
+    units_of: dict[str, list[int]] = {}
+    for placed_name in placement:
+        part, unit = split_unit(placed_name)
+        if unit is not None:
+            units_of.setdefault(part, []).append(unit)
+    units_of = {part: sorted(units) for part, units in units_of.items()}
+    whole = intent
 
     def execute() -> dict[str, Any]:
+        nonlocal intent
         with timing.stage("create"):
             policy = workflow._initial_layout_policy()
             workflow._apply_layout_policy(root, schematic_file, policy)
@@ -173,9 +206,12 @@ def build_direct(
                 workflow._write(root, schematic_file, "project_set_design_intent", workflow.policy.mcp_design_intent(intent))
             created = workflow._write(
                 root, schematic_file, "sch_build_circuit",
-                {"symbols": [item.to_mcp() for item in intent.symbols], "auto_layout": True, "snap_to_grid": True},
+                {"symbols": [entry for item in intent.symbols for entry in _symbol_entries(item, units_of)],
+                 "auto_layout": True, "snap_to_grid": True},
             )
             state["layout"] = policy.describe()
+            if units_of:
+                intent = expand_units(whole, _unit_pins(workflow, root, schematic_file, units_of))
         with timing.stage("place"):
             placed = _apply_placement(workflow, root, schematic_file, intent, placement)
         with timing.stage("terminals_and_routes"):

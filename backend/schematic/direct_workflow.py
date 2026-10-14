@@ -27,6 +27,7 @@ from backend.kicad.netlist import KiCadCliNetlistExporter
 from backend.kicad.service import KiCadService
 
 from . import timing
+from .designators import split_unit, unit_reference
 from .field_placement import plan_fields
 from .intent import NetIntent, PinEndpoint, SchematicIntent
 from .kicad_geometry import measured_scene_from_kicad, text_width_mm
@@ -300,21 +301,24 @@ class DirectWorkflow:
             r"(?:\s+rot=(?P<rotation>-?\d+))?"
             r"\s+unit=(?P<unit>\d+)"
         )
-        placements: dict[str, dict[str, int | float]] = {}
+        found: list[tuple[str, dict[str, int | float]]] = []
         for raw_line in text_value.splitlines():
             match = pattern.match(raw_line.strip())
             if not match:
                 continue
-            reference = match.group("ref")
-            if reference not in expected:
-                continue
-            rotation = int(match.group("rotation") or 0) % 360
-            placements[reference] = {
+            found.append((match.group("ref"), {
                 "x_mm": float(match.group("x")),
                 "y_mm": float(match.group("y")),
-                "rotation": rotation,
+                "rotation": int(match.group("rotation") or 0) % 360,
                 "unit": int(match.group("unit")),
-            }
+            }))
+        # a part drawn in several units is several lines under one reference: each is a placeable of its own (``U5:2``)
+        lines_of = {reference: sum(1 for ref, _item in found if ref == reference) for reference, _item in found}
+        placements: dict[str, dict[str, int | float]] = {}
+        for reference, item in found:
+            name = unit_reference(reference, int(item["unit"])) if lines_of[reference] > 1 else reference
+            if name in expected:
+                placements[name] = item
 
         missing = sorted(expected - placements.keys())
         if missing:
@@ -1321,7 +1325,7 @@ class DirectWorkflow:
             for node in readback.get("project_graph", {}).get("nodes", [])
             if node.get("kind") == "component" and node.get("ref")
         }
-        missing = sorted(expected - actual)
+        missing = sorted({split_unit(reference)[0] for reference in expected} - actual)   # a unit is its part's reference
         if missing:
             raise RuntimeError(
                 "Post-workflow readback is missing references: " + ", ".join(missing)

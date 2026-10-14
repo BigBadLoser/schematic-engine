@@ -51,6 +51,7 @@ GUARDED_WRITE_TOOLS = {
     "sch_place_fields",
     "sch_attach_power_flags",
     "sch_set_symbol_mirror",
+    "sch_move_unit",
     "sch_align_relative_pins",
     "sch_frame_functional_blocks",
     "sch_mark_no_connect_pins",
