@@ -2000,8 +2000,8 @@ def _place_group(
     def place_attachment(ref: str, attachment, lane_start: tuple[float, int] | None = None, far_first: bool = False) -> None:
         if ref not in by_ref or attachment.net not in net_by_name:
             return
-        rail_pin = net_pin(ref, attachment.rail)
         signal_pin = net_pin(ref, attachment.net)
+        rail_pin = net_pin(ref, attachment.rail) if attachment.rail else signal_pin      # a tap has no rail pin
         if rail_pin is None or signal_pin is None:
             return
         if attachment.net in led_nets and attachment.net not in cleared:
@@ -2020,8 +2020,8 @@ def _place_group(
             if signal_pin not in g.pins or rail_pin not in g.pins:
                 return False
             signal, rail = g.pins[signal_pin], g.pins[rail_pin]
-            if len(g.pins) > 2:
-                # a clamp (a dual diode with its rails left and right): its signal pin points at the wire, the body beyond it
+            if len(g.pins) > 2 or not attachment.rail:
+                # a tap (a one-pin part) or a clamp (a dual diode with its rails left and right): its signal pin points at the wire, the body beyond it
                 body = g.body if g.body is not None else g.box
                 return (abs(signal.normal[0]) < .5 and signal.normal[1] * side_sign < -.5
                         and (body[1] >= signal.point[1] - _EPS if side_sign > 0 else body[3] <= signal.point[1] + _EPS))

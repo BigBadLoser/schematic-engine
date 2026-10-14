@@ -49,17 +49,13 @@ class FixtureFileTests(unittest.TestCase):
                 plan = ladder_fixture.load_fixture(FIXTURES / f"{name}.json").plan
                 self.assertEqual(Plan.from_json(plan.to_json()), plan)
 
-    def test_a_part_the_heuristic_cannot_place_is_left_out_of_the_plan_and_the_baseline(self):
-        # With real (tight) symbol boxes the heuristic runs out of a slot on one corpus sheet: tally_timecode (R21, a
-        # merged multi-unit host). The part is in no structure of the plan (a part left out is in none), so every fixture's
-        # baseline is complete: nothing planned is unplaced.
+    def test_every_planned_part_has_a_place_in_the_baseline(self):
+        # A part the heuristic finds no slot for is left out of the plan (it is in no structure), so a baseline never lacks a
+        # part the plan has. (tally_timecode's R21 once had no slot; with its test points as taps it has.)
         for name in (*DEMOS, *CORPUS):
             fixture = ladder_fixture.load_fixture(FIXTURES / f"{name}.json")
             with self.subTest(name):
                 self.assertEqual(fixture.unplaced, ())
-        timecode = ladder_fixture.load_fixture(FIXTURES / "tally_timecode.json")
-        self.assertNotIn("R21", timecode.plan.parts())
-        self.assertIn("R21", timecode.roles["attachments"])
 
     def test_the_baseline_of_every_complete_fixture_is_legal(self):
         for name in (*DEMOS, *CORPUS):
