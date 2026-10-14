@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ladder_fixture, placement_refinement as solvers
+from .designators import split_unit
 from .ladder_plan import Plan, attach_unplanned, body_box, plan_routes
 from .placement_refinement import Connection, OrientedGeometry, PlacedSymbol, Placement
 
@@ -137,7 +138,9 @@ def posed(fixture: ladder_fixture.Fixture, placements: Mapping[str, Placement], 
     placed ones when the fixture says so)."""
     symbols = ladder_fixture.apply_placements(fixture.symbols, placements)
     if fixture.others == "row":
-        symbols = others_row(symbols, [*fixture.other, *leftover], nets=fixture.nets)
+        # a unit of a multi-unit part that the placement put beside its siblings stays there
+        parts = [ref for ref in (*fixture.other, *leftover) if not (split_unit(ref)[1] is not None and ref in placements)]
+        symbols = others_row(symbols, parts, nets=fixture.nets)
     return symbols
 
 

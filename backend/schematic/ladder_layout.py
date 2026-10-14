@@ -18,7 +18,7 @@ from dataclasses import replace
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
-from .designators import is_source_reference
+from .designators import is_source_reference, split_unit
 from .ladder_plan import GroupRecord, LayoutRecord, NoRecord, StackRecord
 from .orientation import Orientation
 from .placement_refinement import Connection, Placement, PlacedSymbol, OrientedGeometry, GRID_MM, estimate_net
@@ -398,29 +398,74 @@ def ladder_layout(
                        for r, _pin in pins if r == ref})
         and kinds == {True}
     ]
-    lone_refs = [ref for block in lone_blocks for ref in chains[block]] + [ref for ref in rail_only_others if ref not in placed]
+    # A unit of a multi-unit part whose pins are all on rails (an op-amp power unit) stands beside a placed unit of the same
+    # part, as people draw it, not in the supply column.
+    def sibling_of(ref: str) -> str | None:
+        part, unit = split_unit(ref)
+        if unit is None:
+            return None
+        return next((other for other in sorted(placed) if other != ref and split_unit(other)[0] == part), None)
+
+    beside_refs = [ref for ref in rail_only_others if ref not in placed and sibling_of(ref) is not None]
+    lone_refs = ([ref for block in lone_blocks for ref in chains[block]]
+                 + [ref for ref in rail_only_others if ref not in placed and ref not in beside_refs])
+    level = {"supply": 2, "ground": 1, "negative": 0}
+
+    def rail_choice(ref: str) -> tuple[Orientation, OrientedGeometry]:
+        """The orientation of a part whose pins are on rails: vertical, the pin of the higher rail up."""
+        pin_kind = {pin: roles.rails.get(name) for name, pins in pins_by_net.items() for r, pin in pins if r == ref}
+
+        def lone_key(item):
+            orientation, geometry = item
+            ys = [pg.point[1] for pg in geometry.pins.values()]
+            xs = [pg.point[0] for pg in geometry.pins.values()]
+            vertical = (max(ys) - min(ys)) > (max(xs) - min(xs))
+            # the pin of the higher rail points up: supply over ground over a negative rail
+            ranked = [(level[pin_kind[pin]], pg.point[1]) for pin, pg in geometry.pins.items()
+                      if pin_kind.get(pin) in level]
+            wrong = int(any(a > b and ya > yb for a, ya in ranked for b, yb in ranked))
+            return (not vertical, wrong, orientation.rotation, orientation.mirror)
+
+        return min(by_ref[ref].geometry.items(), key=lone_key)
+
+    for ref in beside_refs:
+        sibling = sibling_of(ref)
+        orientation, geometry = rail_choice(ref)
+        sib_box = box_of(sibling, placed[sibling])
+        stub = max(slot_pitch_mm, 2 * gap_mm) + gap_mm          # the power symbols above and below the unit need room
+        others = [core_box(r, pl) for r, pl in placed.items()]
+        core = _core(geometry)
+        middle = (sib_box[1] + sib_box[3]) / 2 - (geometry.box[1] + geometry.box[3]) / 2
+        found = None
+        for step in range(60):                                      # to the right of the sibling, then to its left
+            for side in (1, -1):
+                if side > 0:
+                    x = sib_box[2] + 2 * gap_mm + step * 2 * GRID_MM - geometry.box[0]
+                else:
+                    x = sib_box[0] - 2 * gap_mm - step * 2 * GRID_MM - geometry.box[2]
+                anchor = (snap(x), snap(middle))
+                grown = (anchor[0] + core[0] - gap_mm, anchor[1] + core[1] - stub,
+                         anchor[0] + core[2] + gap_mm, anchor[1] + core[3] + stub)
+                if not any(grown[0] < o[2] - _EPS and o[0] < grown[2] - _EPS and grown[1] < o[3] - _EPS and o[1] < grown[3] - _EPS
+                           for o in others):
+                    found = anchor
+                    found_side = side
+                    break
+            if found is not None:
+                break
+        if found is None:
+            lone_refs.append(ref)              # no room beside it: the supply column
+            continue
+        placed[ref] = Placement(found, orientation)
+        if record is not None:
+            record.beside[ref] = (sibling, orientation, found_side)
     if lone_refs:
         first = results[0]
         top = min((box_of(ref, pl)[1] for ref, pl in first.items()), default=0.0)
         left = left if left is not None else 0.0
-        level = {"supply": 2, "ground": 1, "negative": 0}
         chosen: list[tuple[str, Orientation, OrientedGeometry]] = []
         for ref in lone_refs:
-            symbol = by_ref[ref]
-            pin_kind = {pin: roles.rails.get(name) for name, pins in pins_by_net.items() for r, pin in pins if r == ref}
-
-            def lone_key(item, pin_kind=pin_kind):
-                orientation, geometry = item
-                ys = [pg.point[1] for pg in geometry.pins.values()]
-                xs = [pg.point[0] for pg in geometry.pins.values()]
-                vertical = (max(ys) - min(ys)) > (max(xs) - min(xs))
-                # the pin of the higher rail points up: supply over ground over a negative rail
-                ranked = [(level[pin_kind[pin]], pg.point[1]) for pin, pg in geometry.pins.items()
-                          if pin_kind.get(pin) in level]
-                wrong = int(any(a > b and ya > yb for a, ya in ranked for b, yb in ranked))
-                return (not vertical, wrong, orientation.rotation, orientation.mirror)
-
-            orientation, geometry = min(symbol.geometry.items(), key=lone_key)
+            orientation, geometry = rail_choice(ref)
             chosen.append((ref, orientation, geometry))
         if record is not None:
             record.lone = [(ref, orientation) for ref, orientation, _geometry in chosen]

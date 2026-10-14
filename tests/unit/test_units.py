@@ -112,6 +112,21 @@ class UnitRolesAndLayoutTests(unittest.TestCase):
                                      and boxes[a][1] < boxes[b][3] and boxes[b][1] < boxes[a][3], (a, b))
         self.assertLess(placed["U1:1"].position[0], placed["U1:2"].position[0])      # the units follow the signal
 
+    def test_the_power_unit_stands_beside_a_placed_unit_of_its_part_and_is_planned_in_its_row(self):
+        symbols, nets, roles = self.toy()
+        plan, placed = plan_and_layout(symbols, nets, roles, text_widths={})
+        by_ref = {s.reference: s for s in symbols}
+        power = layout_tests.extent(by_ref["U1:3"], placed)
+        near = min(min(abs(power[0] - sib[2]), abs(sib[0] - power[2]))
+                   for sib in (layout_tests.extent(by_ref["U1:1"], placed), layout_tests.extent(by_ref["U1:2"], placed)))
+        self.assertLess(near, 12.0)                                         # next to a sibling unit, not in the far supply column
+        row = next(r for r in plan.rows if "U1:3" in r.order)
+        index = row.order.index("U1:3")
+        self.assertTrue({"U1:1", "U1:2"} & {row.order[max(index - 1, 0)], row.order[min(index + 1, len(row.order) - 1)]})
+        self.assertEqual(index, len(row.order) - 1)                         # at the end: no wire of the row runs under it
+        self.assertEqual(plan.pins["U1:3"], "")                             # its anchor on the row
+        self.assertIn("U1:3", plan.orientations)
+
     def test_the_solver_places_the_units_too(self):
         try:
             import ortools  # noqa: F401
