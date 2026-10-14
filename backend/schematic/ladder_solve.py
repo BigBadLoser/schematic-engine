@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # Use the field placer's deterministic clock and search conventions. The wall clock is a
 # safety net; a wall-limited incumbent is not reproducible and is not returned.
 _SOLVER_DETERMINISTIC_TIME = 20.0
-_SOLVER_SECONDS = 120.0
+_SOLVER_SECONDS = 650.0     # a safety net only (three times the slowest of the 14 fixtures at five seeds, 212 s); the deterministic limit ends a solve
 _SCALE = 1000
 # The model is written small and grown where a solution needs it (see ``lazy``): a pairwise exclusion
 # between a conductor or reservation and a body or pin is written up front only if the two stand within
@@ -2016,8 +2016,7 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
         status = solver.Solve(model, watch)
         used["wall"] += solver.WallTime()
         used["deterministic"] += solver.ResponseProto().deterministic_time
-        if used["wall"] >= _SOLVER_SECONDS:
-            raise LadderSolveError("cp-sat (wall-clock limit)")
+        # (At the wall-clock limit no further run starts; the best placement found stands, marked in the status.)
         timing["feasibility" if make is None else "optimisation"] += solver.WallTime()
         state["log"].append((state["stage"], solver.StatusName(status), round(solver.ResponseProto().deterministic_time, 2),
                              len(watch.broken), round(solver.WallTime(), 1), watch.improvements, round(watch.last, 2)))
@@ -2252,7 +2251,8 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
                 chosen = best[2]
                 stats["selected"] = state["kept"][best[1]][0]
     solution = Solution(chosen)
-    label = "cp-sat" if status == cp_model.OPTIMAL else "cp-sat (deterministic limit)"
+    label = ("cp-sat" if status == cp_model.OPTIMAL else
+             "cp-sat (wall-clock limit)" if used["wall"] >= _SOLVER_SECONDS else "cp-sat (deterministic limit)")
     result = Placements(((ref, Placement((solution.Value(x[ref]) * GRID_MM, solution.Value(y[ref]) * GRID_MM),
                                          plan.orientations[ref])) for ref in refs), solver=label,
                         wires=drawn_routes(solution))

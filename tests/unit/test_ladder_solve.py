@@ -273,11 +273,13 @@ class LadderSolveTests(unittest.TestCase):
             legalise(p, symbols, [Connection("signal", (("A", "2"), ("B", "1")))], seeds=(7, 11))
         self.assertIn("N", caught.exception.parts)
 
-    def test_wall_limited_incumbent_is_not_returned(self):
+    def test_the_wall_clock_guard_returns_the_best_clean_incumbent_marked_in_the_status(self):
         p, symbols, nets = self.chain()
-        with patch("backend.schematic.ladder_solve.cp_model.CpSolver.WallTime", return_value=120):
-            with self.assertRaisesRegex(LadderSolveError, "wall-clock limit"):
-                legalise(p, symbols, nets)
+        plain = legalise(p, symbols, nets)
+        with patch("backend.schematic.ladder_solve._SOLVER_SECONDS", 1.0),                 patch("backend.schematic.ladder_solve.cp_model.CpSolver.WallTime", return_value=0.4):
+            limited = legalise(p, symbols, nets)
+        self.assertEqual(limited.status, "cp-sat (wall-clock limit)")
+        self.assertEqual(set(limited), set(plain))
 
     def test_fractional_grid_pin_offsets_do_not_require_off_grid_anchors(self):
         symbols = [symbol("A"), symbol("B")]

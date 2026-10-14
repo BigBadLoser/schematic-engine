@@ -470,6 +470,12 @@ WP5 makes the following interpretations explicit (general rules, not fixture set
   (process start-up and the slowest seed). bitaxe_power is at the wall guard: K = 1 0/0/33/0/39/1847.6, K = 3 only seed 13 placed
   (0/0/12/0/28/10546.3), K = 5 seeds 7 and 13 placed and 7 won. K = 5 with the bodies global is worse: amp 0/0/0/0/1/358.1, uno_r4_power
   498.8 with 7 crossings, bitaxe_power no placement from any seed, pico_hbridge 122 s; only gamma_preamp (0 throughs, 189.7) is better.
+- The wall-clock guard is a safety net, not a limit (`_SOLVER_SECONDS` 650 s). At 120 s it decided results on bitaxe_power (a seed
+  placed or not with the machine's load). Measured at five seeds, one fixture at a time, no guard: the slowest wall times are
+  bitaxe_power 212 s, uno_r4_power 133 s, gamma_sipm 127 s, amp 111 s, tally_power 111 s, the rest 95 s or less; the guard is three
+  times the worst. When it fires the best clean placement found stands and the status says `cp-sat (wall-clock limit)` (an error
+  only if none exists yet). bitaxe_power at five seeds gave the same placement twice (0/0/33/0/39/1847.6, seed 7), the two runs
+  side by side at 302 and 303 s.
 - Known gap, model against checker: the one fault the solver does not see on amp (N_L2_1 through R7) is the checker's margin: a drop that does not carry a
   part's own pin keeps 0.5 mm from that part's body unless it runs over one of the part's tips, and the solver shortened the
   drop by the margin at both ends so that one landing on a host's tip is let. `_FULL_MARGIN` (off) keeps the whole drop out
