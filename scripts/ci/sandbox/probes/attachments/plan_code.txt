@@ -1,0 +1,309 @@
+
+# ---------------------------------------------------------------------------------------------------------------------
+# prototype: attachments (A) and pinned path (B), iteration 2
+
+ATTACH = True
+CHAIN = True
+PITCH_MM = 7.62
+HANG_MM = 2.54
+SPAN_MM = 15.24
+CHAIN_GAP_MM = 2.54
+DX_SLOTS = (0.0, PITCH_MM, -PITCH_MM, 2 * PITCH_MM, -2 * PITCH_MM)
+SEED_PREFIX = "VIJ"
+
+
+class Plan:
+    def __init__(self, symbols, nets, model):
+        self.att = {}      # attachment -> (host, host pin, rail kind, wire pin)
+        self.orient = {}
+        self.dx = {}
+        self.hosts = {}
+        self.chain = []
+        self.pos = {}
+        self.noslot = set()
+        self.y = None
+        self.symbols = {s.reference: s for s in symbols}
+        if ATTACH:
+            self._attachments(symbols, model)
+        if CHAIN:
+            self._chain(model)
+        if ATTACH and self.chain:
+            self._retarget(model)
+
+    @staticmethod
+    def _npins(s):
+        return len(next(iter(s.geometry.values())).pins)
+
+    def _attachments(self, symbols, model):
+        kind = {}
+        for n in model.nets:
+            if n.style == "power":
+                for p in n.pins:
+                    kind[p] = "ground" if n.facing is not None and tuple(n.facing) == (0, 1) else "supply"
+        wire = {p: n for n in model.nets if n.style == "wire" for p in n.pins}
+        cand = {}
+        for s in symbols:
+            if not s.movable or s.reference[0] in SEED_PREFIX:
+                continue
+            pins = sorted(next(iter(s.geometry.values())).pins)
+            if len(pins) != 2:
+                continue
+            ks = [kind.get((s.reference, p)) for p in pins]
+            ws = [wire.get((s.reference, p)) for p in pins]
+            for i in (0, 1):
+                if ks[i] and ws[1 - i] is not None and ks[1 - i] is None:
+                    cand[s.reference] = (pins[i], pins[1 - i], ks[i], ws[1 - i])
+        slots = {}
+        for ref in sorted(cand):
+            rail_pin, wire_pin, rk, net = cand[ref]
+            others = sorted({r for r, _p in net.pins if r != ref})
+            pool = [r for r in others if r not in cand]
+            if not pool:
+                continue
+            best = max(self._npins(self.symbols[r]) for r in pool)
+            host = next(r for r in pool if self._npins(self.symbols[r]) == best)   # ties: lowest reference
+            want = (0, 1) if rk == "ground" else (0, -1)
+            s = self.symbols[ref]
+            good = [o for o, g in s.geometry.items() if tuple(round(v) for v in g.pins[rail_pin].normal) == want]
+            if not good:
+                continue
+            cost = s.orientation_cost or {}
+            o = min(good, key=lambda o: (0 if o == s.orientation else 1, cost.get(o, 0)))
+            hpin = next(p for r, p in net.pins if r == host)
+            h = self.symbols[host]
+            vertical = abs(h.geometry[h.orientation].pins[hpin].normal[1]) > 0.5
+            key = (host, hpin) if vertical else (host,)
+            k = slots.get(key, 0)
+            slots[key] = k + 1
+            self.att[ref] = (host, hpin, rk, wire_pin)
+            self.orient[ref] = o
+            self.dx[ref] = DX_SLOTS[k % len(DX_SLOTS)]
+            self.hosts.setdefault(host, []).append(ref)
+
+    def _chain(self, model):
+        adj = {}
+        for n in model.nets:
+            if n.style != "wire":
+                continue
+            members = sorted({r for r, _p in n.pins if r not in self.att})
+            for a in members:
+                adj.setdefault(a, set()).update(set(members) - {a})
+        if not adj:
+            return
+        seeds = [r for r in sorted(adj) if r[0] in SEED_PREFIX] or [min(adj, key=lambda r: (self.symbols[r].position[0], r))]
+        pool = [r for r in sorted(adj) if r not in seeds]
+        actives = [r for r in pool if r[0] in "UQ"] or pool      # D1/T1 of the LM317 have 4 pins to U1's 3: ICs and transistors only
+        top = max(self._npins(self.symbols[r]) for r in actives)
+        musts = [r for r in actives if self._npins(self.symbols[r]) == top]
+
+        def bfs(start, banned=()):
+            dist, par, q = {start: 0}, {}, [start]
+            for r in q:
+                for m in sorted(adj[r]):
+                    if m not in dist and m not in banned:
+                        dist[m] = dist[r] + 1
+                        par[m] = r
+                        q.append(m)
+            return dist, par
+
+        def path(par, end, start):
+            p = [end]
+            while p[-1] != start:
+                p.append(par[p[-1]])
+            return p[::-1]
+        best = []
+        for s in seeds:
+            d1, p1 = bfs(s)
+            for m in musts:
+                if m not in d1:
+                    continue
+                head = path(p1, m, s)
+                d2, p2 = bfs(m, banned=set(head) - {m})
+                far = max(sorted(d2), key=lambda r: d2[r])
+                tail = path(p2, far, m)
+                chain = head + tail[1:]
+                if len(chain) > len(best):
+                    best = chain
+        if len(best) >= 3:
+            self.chain = best
+            self.pos = {r: i for i, r in enumerate(best)}
+
+    # -- chain
+    def row_cell(self, ref):
+        return None if self.y is None or ref not in self.pos or not self.symbols[ref].movable else _cells(self.y)
+
+    def _bx(self, ref, pose, o=None):
+        b = self.symbols[ref].geometry[o or pose[ref][1]].box
+        return b[0], b[2]
+
+    def x_ok(self, ref, x, pose, o=None):
+        """Neighbouring chain parts keep their boxes CHAIN_GAP_MM apart (not just their centres)."""
+        i = self.pos[ref]
+        l, r = self._bx(ref, pose, o)
+        if i > 0:
+            n = self.chain[i - 1]
+            if x + l < pose[n][0][0] + self._bx(n, pose)[1] + CHAIN_GAP_MM - 1e-6:
+                return False
+        if i + 1 < len(self.chain):
+            n = self.chain[i + 1]
+            if pose[n][0][0] + self._bx(n, pose)[0] < x + r + CHAIN_GAP_MM - 1e-6:
+                return False
+        return True
+
+    def combo_ok(self, members, trial):
+        return all(self.x_ok(r, trial[r][0][0], trial, trial[r][1]) for r in members if r in self.pos and self.row_cell(r) is not None)
+
+    def keeps(self, pose):
+        if self.y is None:
+            return True
+        for r in self.chain:
+            if self.symbols[r].movable and abs(pose[r][0][1] - self.y) > 1e-6:
+                return False
+        return all(self.x_ok(r, pose[r][0][0], pose) for r in self.chain)
+
+    # -- attachments (hung from the net's trunk, not from a pin)
+    def _retarget(self, model):
+        for ref, (host, hpin, rk, wpin) in list(self.att.items()):
+            net = next((n for n in model.nets if n.style == "wire" and (ref, wpin) in n.pins), None)
+            if net is None:
+                continue
+            for _i, r, p in sorted((self.pos[r], r, p) for r, p in net.pins if r in self.pos):
+                h = self.symbols[r]
+                normal = h.geometry[h.orientation].pins[p].normal
+                if abs(normal[0]) > 0.5:
+                    self.hosts[host].remove(ref)
+                    self.hosts.setdefault(r, []).append(ref)
+                    self.att[ref] = (r, p, rk, wpin)
+                    break
+
+    def active(self, ref):
+        return frozenset((ref,)) if ref in self.att else frozenset((ref, *self.hosts.get(ref, ())))
+
+    def orients(self, ref, symbol):
+        if ref in self.att:
+            return [self.orient[ref]]
+        if ref in self.pos and len(symbol.geometry[symbol.orientation].pins) == 2 and self.y is not None:
+            flat = [o for o, g in symbol.geometry.items() if len({round(p.point[1], 3) for p in g.pins.values()}) == 1]
+            if flat:
+                return flat
+        return list(symbol.geometry)
+
+    def _anchor(self, ref, pose, model):
+        """(x of the first slot, y of the trunk, direction the trunk runs along x)."""
+        host, hpin, rk, wpin = self.att[ref]
+        hpos, horient = pose[host]
+        pins, _box, body = model.world(host, hpos, horient)
+        tip, normal = pins[hpin]
+        if abs(normal[0]) > 0.5:
+            d = 1 if normal[0] > 0 else -1
+            return (body[2] if d > 0 else body[0]) + d * PITCH_MM, tip[1], d
+        return tip[0], tip[1] + (PITCH_MM if normal[1] > 0 else -PITCH_MM), 1
+
+    def att_lattice(self, ref, orientation, pose, model):
+        xb, yt, d = self._anchor(ref, pose, model)
+        wp = self.symbols[ref].geometry[orientation].pins[self.att[ref][3]].point
+        steps = int(SPAN_MM / GRID_MM + 1e-9)
+        return {_cells(xb + k * GRID_MM - wp[0]) for k in range(-steps, steps + 1)}, {_cells(yt - wp[1])}
+
+    def att_ok(self, ref, orientation, position, pose, model, skip=()):
+        wp = self.symbols[ref].geometry[orientation].pins[self.att[ref][3]].point
+        tip = (position[0] + wp[0], position[1] + wp[1])
+        box = model.world(ref, position, orientation)[1]
+        for other in model.symbols:
+            if other == ref or other in skip:
+                continue
+            pins, ob, _body = model.world(other, *pose[other])
+            for pt, _n in pins.values():
+                if math.hypot(pt[0] - tip[0], pt[1] - tip[1]) < HANG_MM - 1e-6:
+                    return False
+            if box[0] < ob[2] + HANG_MM and ob[0] < box[2] + HANG_MM and box[1] < ob[3] + HANG_MM and ob[1] < box[3] + HANG_MM:
+                return False
+        return True
+
+    def _pose_for(self, ref, pose, model, dx):
+        xb, yt, d = self._anchor(ref, pose, model)
+        o = self.orient[ref]
+        wp = self.symbols[ref].geometry[o].pins[self.att[ref][3]].point
+        return ((_cells(xb + d * dx - wp[0]) * GRID_MM, _cells(yt - wp[1]) * GRID_MM), o)
+
+    def hang_errors(self, pose, model):
+        """Attachments whose body crosses the trunk row line (the wire-net pin's y)."""
+        bad = []
+        for ref, (_h, _hp, rk, wp) in self.att.items():
+            (px, py), o = pose[ref]
+            body = model.world(ref, (px, py), o)[2]
+            y = py + self.symbols[ref].geometry[o].pins[wp].point[1]
+            if not (body[1] >= y - 1e-6 if rk == "ground" else body[3] <= y + 1e-6):
+                bad.append(ref)
+        return bad
+
+    def settle(self, pose, host, model):
+        for ref in self.hosts.get(host, ()):
+            pose[ref] = self._pose_for(ref, pose, model, self.dx[ref])
+
+    def sync(self, pose, ref, model):
+        xb, _y, d = self._anchor(ref, pose, model)
+        wp = self.symbols[ref].geometry[pose[ref][1]].pins[self.att[ref][3]].point
+        self.dx[ref] = (pose[ref][0][0] + wp[0] - xb) * d
+
+    def _keep_slid(self, pose, model):
+        kept = set()
+        for ref in self.att:
+            xb, yt, d = self._anchor(ref, pose, model)
+            (px, py), o = pose[ref]
+            wp = self.symbols[ref].geometry[self.orient[ref]].pins[self.att[ref][3]].point
+            if o == self.orient[ref] and abs(py + wp[1] - yt) < 0.7 and abs((px + wp[0] - xb) * d) <= SPAN_MM + 0.7:
+                self.dx[ref] = (px + wp[0] - xb) * d
+                kept.add(ref)
+        return kept
+
+    def _place_all(self, t, model, kept):
+        pending = set(self.att) - kept
+        for ref in sorted(pending):
+            pending.discard(ref)
+            first = None
+            for dx in (0.0, PITCH_MM, 2 * PITCH_MM, -PITCH_MM, -2 * PITCH_MM):
+                p = self._pose_for(ref, t, model, dx)
+                first = first or (dx, p)
+                if self.att_ok(ref, p[1], p[0], t, model, skip=pending):
+                    first = (dx, p)
+                    break
+            if not self.att_ok(ref, first[1][1], first[1][0], t, model, skip=pending):
+                self.noslot.add(ref)
+            self.dx[ref], t[ref] = first
+
+    def prepass(self, pose, model):
+        kept = self._keep_slid(pose, model)
+        ys = sorted({round(pose[r][0][1] / GRID_MM) * GRID_MM for r in self.chain if self.symbols[r].movable})
+        best = None
+        for y in ys or [None]:
+            t = dict(pose)
+            self.y = y
+            if y is not None:
+                prev = None
+                for r in self.chain:
+                    (x, _y), o = t[r]
+                    if self.symbols[r].movable:
+                        bl, _br = self._bx(r, t)
+                        if prev is not None and x + bl < prev + CHAIN_GAP_MM:
+                            x = math.ceil((prev + CHAIN_GAP_MM - bl + 0.01) / GRID_MM) * GRID_MM
+                        t[r] = ((x, y), o)
+                    prev = t[r][0][0] + self._bx(r, t)[1]
+            if kept and len(ys) <= 1:
+                for ref in kept:
+                    t[ref] = self._pose_for(ref, t, model, self.dx[ref])
+                self._place_all(t, model, kept)
+            else:
+                self._place_all(t, model, set())
+            c = model.cost(t).total
+            if best is None or c < best[0] - 1e-9:
+                best = (c, y, t, dict(self.dx))
+        if best is None:
+            return pose
+        self.y, self.dx = best[1], best[3]
+        return best[2]
+
+
+PLAN = Plan([], [], type("M", (), {"nets": []})())
+
+

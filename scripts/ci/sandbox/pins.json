@@ -1,0 +1,18 @@
+{
+  "python": {"min": "3.13"},
+  "node": {"min": 20},
+  "pip": {
+    "ortools": "9.12.4544",
+    "kicad-mcp-pro": "4.0.1"
+  },
+  "elkjs_bundle": {
+    "url": "https://raw.githubusercontent.com/kieler/elkjs/0.12.0/lib/elk.bundled.js",
+    "git_blob_sha1": "cb15bba8f2eb5cd6c010cb012554e95d44d80f30",
+    "bytes": 1609707
+  },
+  "approx_download_mb": {
+    "pip": "80-120",
+    "pip_note": "estimate for all wheels incl. dependencies; the ortools win_amd64 wheel alone is 18.1 MB",
+    "npm": "2"
+  }
+}

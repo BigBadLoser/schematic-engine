@@ -1,0 +1,66 @@
+{
+  "C101": {
+    "mirror": "",
+    "position": [
+      58.42,
+      16.51
+    ],
+    "rotation": 0
+  },
+  "D101": {
+    "mirror": "",
+    "position": [
+      34.29,
+      16.51
+    ],
+    "rotation": 270
+  },
+  "L101": {
+    "mirror": "",
+    "position": [
+      45.72,
+      12.7
+    ],
+    "rotation": 90
+  },
+  "Q1": {
+    "mirror": "",
+    "position": [
+      24.13,
+      15.24
+    ],
+    "rotation": 90
+  },
+  "R101": {
+    "mirror": "",
+    "position": [
+      24.13,
+      26.67
+    ],
+    "rotation": 0
+  },
+  "R103": {
+    "mirror": "",
+    "position": [
+      69.85,
+      12.7
+    ],
+    "rotation": 90
+  },
+  "V101": {
+    "mirror": "",
+    "position": [
+      24.13,
+      38.1
+    ],
+    "rotation": 0
+  },
+  "V102": {
+    "mirror": "",
+    "position": [
+      12.7,
+      17.78
+    ],
+    "rotation": 0
+  }
+}

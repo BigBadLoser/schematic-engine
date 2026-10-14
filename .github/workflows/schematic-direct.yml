@@ -1,0 +1,115 @@
+name: Schematic Direct Build
+
+# Builds KiCad's demo circuits (buck converter, LM317 supply, op-amp stage, three-transistor amplifier) from their
+# committed placements, through the real KiCad tools, and checks the sheets: netlist matches the intent, wire length
+# (+/- 0.01 mm), corners and crossings equal tests/fixtures/direct/expected.json. A few minutes; the unit tests are in ci.yml.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/schematic/**"
+      - "backend/kicad/**"
+      - "scripts/schematic_direct_smoke.py"
+      - "scripts/schematic_validation_fixtures.py"
+      - "scripts/schematic_demo_circuits.py"
+      - "scripts/libavoid_route.mjs"
+      - "scripts/ci/check_direct_build.py"
+      - "scripts/ci/sandbox/sbx/kpi.py"
+      - "tests/fixtures/direct/**"
+      - "tests/fixtures/schematic_engine/**"
+      - ".github/workflows/schematic-direct.yml"
+  pull_request:
+    paths:
+      - "backend/schematic/**"
+      - "backend/kicad/**"
+      - "scripts/schematic_direct_smoke.py"
+      - "scripts/schematic_validation_fixtures.py"
+      - "scripts/schematic_demo_circuits.py"
+      - "scripts/libavoid_route.mjs"
+      - "scripts/ci/check_direct_build.py"
+      - "scripts/ci/sandbox/sbx/kpi.py"
+      - "tests/fixtures/direct/**"
+      - "tests/fixtures/schematic_engine/**"
+      - ".github/workflows/schematic-direct.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: schematic-direct-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  demos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KICAD_AI_ENABLE_SCHEMATIC_WRITES: "1"
+      KICAD_AI_MCP_INPROCESS: "1"
+      KICAD10_SYMBOL_DIR: /usr/share/kicad/symbols
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install KiCad 10
+        run: |
+          sudo add-apt-repository --yes ppa:kicad/kicad-10.0-releases
+          sudo apt-get update
+          # Only the schematic CLI and the symbol libraries are needed. Avoid 3D models, demos and documentation.
+          sudo apt-get install -y --no-install-recommends kicad kicad-symbols
+          kicad-cli --version
+
+      - name: Install MCP Pro and CP-SAT
+        run: |
+          # ortools 9.15 requires protobuf>=6.31, which conflicts with kicad-mcp-pro's kicad-python (protobuf<6);
+          # 9.12 is the newest cp313 ortools whose protobuf range overlaps.
+          python -m pip install --upgrade pip
+          python -m pip install "kicad-mcp-pro==4.0.1" "ortools==9.12.4544"
+
+      - name: Install the libavoid router
+        run: npm install --no-save @mr_mint/elkjs-libavoid@0.5.0
+
+      - name: Check the MCP tool surface the stages need
+        run: |
+          python - <<'PY'
+          import sys, tempfile
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from backend.kicad.mcp_pro import McpProReadOnlyAdapter
+          from backend.schematic.direct_workflow import DirectWorkflow
+
+          adapter = McpProReadOnlyAdapter()
+          workflow = DirectWorkflow(adapter.client, adapter, artifact_root=Path(tempfile.gettempdir()))
+          missing = sorted((workflow.REQUIRED_WRITE_TOOLS | workflow.REQUIRED_QA_TOOLS) - adapter.client.list_tools())
+          if missing:
+              raise SystemExit("Missing MCP Pro schematic tools: " + ", ".join(missing))
+          assert workflow.available()
+          print("MCP Pro schematic tool surface: OK")
+          PY
+
+      - name: Build the demos and check the sheets
+        run: python scripts/ci/check_direct_build.py .kicad-ai/direct
+
+      - name: Show build logs on failure
+        if: failure()
+        run: |
+          for log in .kicad-ai/direct/*/build.log; do echo "=== $log"; tail -n 60 "$log"; done
+          cat .kicad-ai/direct/*/failure.json 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: schematic-direct
+          if-no-files-found: warn
+          path: |
+            .kicad-ai/direct/*/*.kicad_sch
+            .kicad-ai/direct/*/*.svg
+            .kicad-ai/direct/*/report.json
+            .kicad-ai/direct/*/failure.json
+            .kicad-ai/direct/*/build.log

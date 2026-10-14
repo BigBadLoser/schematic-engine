@@ -1,0 +1,17 @@
+# SBX_NO_DIRECT_JUNCTION=1 turns off the straight pin-to-junction shortcut in the grouped router. The shortcut
+# never checks the other pins of the endpoint's own symbol, so a planned junction in line with a neighbouring
+# pin produces a wire straight through that pin (found on the amplifier: FB shorted to IN).
+--- a/backend/kicad/mcp_extended_server.py
++++ b/backend/kicad/mcp_extended_server.py
+@@ -2772,7 +2772,10 @@
+                 float(pin_end[0]),
+                 float(pin_end[1]),
+             )
+-            if source_is_point != target_is_point:
++            # SANDBOX OVERLAY e9_no_direct_junction: SBX_NO_DIRECT_JUNCTION=1 turns the straight pin-to-junction
++            # shortcut off. It checks other symbols' bodies and text but never the other pins of the endpoint's
++            # own symbol, so a junction in line with a neighbouring pin shorts the two.
++            if source_is_point != target_is_point and os.environ.get("SBX_NO_DIRECT_JUNCTION") != "1":
+                 axis_aligned = (
+                     abs(direct_start[0] - direct_end[0]) < 1e-6
+                     or abs(direct_start[1] - direct_end[1]) < 1e-6

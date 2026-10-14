@@ -1,0 +1,63 @@
+# Local CI equivalent for the schematic engine recovery lane.
+#
+# Mirrors the toolchain in .github/workflows/schematic-recovery-visual.yml:
+#   Ubuntu + Python 3.13 + KiCad 10 (CLI + symbols) + MCP Pro + Node 22
+#   + ortools + cairosvg + the pinned elkjs bundle.
+#
+# Build:
+#   docker build -t kicad-engine-ci -f scripts/ci/Dockerfile.engine .
+# Run:
+#   docker run --rm -v "$PWD":/work -w /work kicad-engine-ci \
+#       bash scripts/ci/run-recovery-visual.sh
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Base tooling, then Python 3.13 (deadsnakes) and KiCad 10 (CLI + symbols).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        software-properties-common ca-certificates curl gnupg git \
+        build-essential pkg-config \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && add-apt-repository -y ppa:kicad/kicad-10.0-releases \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.13 python3.13-venv python3.13-dev \
+        kicad kicad-symbols \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 22 for the libavoid bridge.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 3.13 runtime dependencies, in an isolated venv.
+#
+# NOTE 1: the CI workflow pins ortools==9.15.6755, but that requires
+# protobuf>=6.31 whereas kicad-mcp-pro==4.0.1 resolves kicad-python (>=0.6,<0.8)
+# which requires protobuf<6. The two are unsatisfiable together. 9.12.4544 is
+# the newest cp313 ortools whose protobuf range (<5.30,>=5.29.3) overlaps.
+# The CP-SAT API used here (ortools.sat.python.cp_model) is unchanged.
+#
+# NOTE 2: a venv keeps pip out of the Ubuntu dist-packages tree; otherwise pip
+# refuses to replace Debian-provided packages (e.g. PyJWT 2.7.0 from
+# python3-jwt, pulled in by software-properties-common).
+RUN python3.13 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir \
+        "ortools==9.12.4544" \
+        "kicad-mcp-pro==4.0.1" \
+        cairosvg
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# Pinned elkjs bundle, verified by git blob hash exactly as CI does.
+RUN curl -fsSL \
+        https://raw.githubusercontent.com/kieler/elkjs/0.12.0/lib/elk.bundled.js \
+        -o /tmp/elk.bundled.js \
+    && test "$(git hash-object /tmp/elk.bundled.js)" = "cb15bba8f2eb5cd6c010cb012554e95d44d80f30"
+
+ENV KICAD_AI_ELKJS_BUNDLE=/tmp/elk.bundled.js
+ENV KICAD10_SYMBOL_DIR=/usr/share/kicad/symbols
+
+WORKDIR /work

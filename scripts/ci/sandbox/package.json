@@ -1,0 +1,9 @@
+{
+  "name": "kicad-ai-sandbox",
+  "private": true,
+  "description": "Pinned Node dependencies for the schematic-engine experiment sandbox. Installed into .work/, never into the repository root.",
+  "dependencies": {
+    "@mr_mint/elkjs-libavoid": "0.5.0",
+    "libavoid-js": "0.5.0-beta.5"
+  }
+}

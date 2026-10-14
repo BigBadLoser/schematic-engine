@@ -1,0 +1,20 @@
+# libavoid router options can be overridden per run from SBX_LIBAVOID_OPTIONS (a JSON object).
+# Tests review findings A2/B2, e.g. --env SBX_LIBAVOID_OPTIONS={"nudgeOrthogonalSegmentsConnectedToShapes":false}
+# Anchored on the Node invocation and the lines after it, so it applies both before and after the engine gained
+# its own KICAD_AI_ROUTER_EXPERIMENT switch; where both exist the sandbox override is applied last and wins.
+--- a/backend/kicad/mcp_extended_server.py
++++ b/backend/kicad/mcp_extended_server.py
+@@ -2652,5 +2652,11 @@
+-        completed = subprocess.run(
+-            ["node", "scripts/libavoid_route.mjs"],
++        # SANDBOX OVERLAY e2_libavoid_options: JSON in SBX_LIBAVOID_OPTIONS
++        # overrides entries of payload["options"], e.g. {"crossingPenalty": 0}.
++        _sbx_options = os.environ.get("SBX_LIBAVOID_OPTIONS")
++        if _sbx_options:
++            payload["options"].update(json.loads(_sbx_options))
++
++        completed = subprocess.run(
++            ["node", "scripts/libavoid_route.mjs"],
+             input=json.dumps(payload),
+             text=True,
+             capture_output=True,

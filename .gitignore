@@ -1,0 +1,18 @@
+node_modules/
+dist/
+target/
+__pycache__/
+*.py[cod]
+.venv/
+.kicad-ai/cache/
+.kicad-ai/sessions/
+
+*.orig
+
+scripts/ci/sandbox/probes/*/out/
+
+# tool state, never source
+.claude/worktrees/
+.kilo/
+.kicad-ai/
+*.det

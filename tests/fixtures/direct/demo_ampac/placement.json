@@ -1,0 +1,186 @@
+{
+  "C1": {
+    "mirror": "",
+    "position": [
+      33.02,
+      60.96
+    ],
+    "rotation": 270
+  },
+  "C2": {
+    "mirror": "",
+    "position": [
+      88.9,
+      49.53
+    ],
+    "rotation": 0
+  },
+  "C3": {
+    "mirror": "",
+    "position": [
+      95.25,
+      102.87
+    ],
+    "rotation": 0
+  },
+  "C4": {
+    "mirror": "",
+    "position": [
+      86.36,
+      20.32
+    ],
+    "rotation": 270
+  },
+  "L1": {
+    "mirror": "",
+    "position": [
+      102.87,
+      24.13
+    ],
+    "rotation": 180
+  },
+  "L2": {
+    "mirror": "",
+    "position": [
+      101.6,
+      92.71
+    ],
+    "rotation": 0
+  },
+  "Q1": {
+    "mirror": "",
+    "position": [
+      102.87,
+      60.96
+    ],
+    "rotation": 0
+  },
+  "Q2": {
+    "mirror": "",
+    "position": [
+      59.69,
+      60.96
+    ],
+    "rotation": 0
+  },
+  "Q3": {
+    "mirror": "y",
+    "position": [
+      74.93,
+      60.96
+    ],
+    "rotation": 0
+  },
+  "R1": {
+    "mirror": "",
+    "position": [
+      76.2,
+      29.21
+    ],
+    "rotation": 0
+  },
+  "R10": {
+    "mirror": "",
+    "position": [
+      62.23,
+      72.39
+    ],
+    "rotation": 0
+  },
+  "R11": {
+    "mirror": "",
+    "position": [
+      87.63,
+      88.9
+    ],
+    "rotation": 0
+  },
+  "R12": {
+    "mirror": "",
+    "position": [
+      97.79,
+      74.93
+    ],
+    "rotation": 180
+  },
+  "R2": {
+    "mirror": "",
+    "position": [
+      95.25,
+      24.13
+    ],
+    "rotation": 0
+  },
+  "R3": {
+    "mirror": "",
+    "position": [
+      41.91,
+      57.15
+    ],
+    "rotation": 0
+  },
+  "R4": {
+    "mirror": "",
+    "position": [
+      62.23,
+      48.26
+    ],
+    "rotation": 0
+  },
+  "R5": {
+    "mirror": "",
+    "position": [
+      69.85,
+      41.91
+    ],
+    "rotation": 0
+  },
+  "R6": {
+    "mirror": "",
+    "position": [
+      80.01,
+      81.28
+    ],
+    "rotation": 0
+  },
+  "R7": {
+    "mirror": "",
+    "position": [
+      95.25,
+      92.71
+    ],
+    "rotation": 180
+  },
+  "R8": {
+    "mirror": "",
+    "position": [
+      105.41,
+      74.93
+    ],
+    "rotation": 0
+  },
+  "R9": {
+    "mirror": "",
+    "position": [
+      49.53,
+      64.77
+    ],
+    "rotation": 0
+  },
+  "V1": {
+    "mirror": "",
+    "position": [
+      22.86,
+      66.04
+    ],
+    "rotation": 0
+  },
+  "V3": {
+    "mirror": "",
+    "position": [
+      12.7,
+      12.7
+    ],
+    "rotation": 0
+  }
+}

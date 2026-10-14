@@ -1,0 +1,25 @@
+# Keeps a diagnostic that the engine otherwise discards, for runs that fail late:
+#   - every power-terminal decision (power-terminals-<ns>.json in SBX_DUMP_DIR): strategy, unchecked fallback, segments
+# Read the terminals with: sandbox.py terminals RUN. Changes no engine behavior.
+--- a/backend/kicad/mcp_extended_server.py
++++ b/backend/kicad/mcp_extended_server.py
+@@ -673,6 +673,19 @@
+                         for segment in segments
+                     ],
+                 }
++            )
++
++        # SANDBOX OVERLAY e5_trace: record every power-terminal decision
++        # (strategy, whether the unchecked fallback fired, wire segments).
++        _sbx_dump_dir = os.environ.get("SBX_DUMP_DIR")
++        if _sbx_dump_dir:
++            import time as _sbx_time
++            from pathlib import Path as _SbxPath
++
++            _SbxPath(_sbx_dump_dir).mkdir(parents=True, exist_ok=True)
++            _SbxPath(_sbx_dump_dir, f"power-terminals-{_sbx_time.time_ns()}.json").write_text(
++                json.dumps({"clearance_mm": sheet.clearance, "terminals": diagnostics}, default=str),
++                encoding="utf-8",
+             )
+ 
+         return json.dumps(

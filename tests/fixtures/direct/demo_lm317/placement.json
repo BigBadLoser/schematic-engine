@@ -1,0 +1,114 @@
+{
+  "C1": {
+    "mirror": "",
+    "position": [
+      72.39,
+      25.4
+    ],
+    "rotation": 0
+  },
+  "C2": {
+    "mirror": "",
+    "position": [
+      86.36,
+      38.1
+    ],
+    "rotation": 0
+  },
+  "C3": {
+    "mirror": "",
+    "position": [
+      115.57,
+      25.4
+    ],
+    "rotation": 0
+  },
+  "D1": {
+    "mirror": "",
+    "position": [
+      58.42,
+      21.59
+    ],
+    "rotation": 0
+  },
+  "D2": {
+    "mirror": "",
+    "position": [
+      83.82,
+      12.7
+    ],
+    "rotation": 0
+  },
+  "D3": {
+    "mirror": "",
+    "position": [
+      99.06,
+      25.4
+    ],
+    "rotation": 270
+  },
+  "R1": {
+    "mirror": "",
+    "position": [
+      95.25,
+      38.1
+    ],
+    "rotation": 0
+  },
+  "R2": {
+    "mirror": "",
+    "position": [
+      134.62,
+      25.4
+    ],
+    "rotation": 0
+  },
+  "R3": {
+    "mirror": "",
+    "position": [
+      12.7,
+      38.1
+    ],
+    "rotation": 0
+  },
+  "R4": {
+    "mirror": "",
+    "position": [
+      106.68,
+      25.4
+    ],
+    "rotation": 0
+  },
+  "R5": {
+    "mirror": "",
+    "position": [
+      125.73,
+      21.59
+    ],
+    "rotation": 90
+  },
+  "T1": {
+    "mirror": "",
+    "position": [
+      29.21,
+      26.67
+    ],
+    "rotation": 0
+  },
+  "U1": {
+    "mirror": "",
+    "position": [
+      86.36,
+      21.59
+    ],
+    "rotation": 0
+  },
+  "V1": {
+    "mirror": "",
+    "position": [
+      12.7,
+      26.67
+    ],
+    "rotation": 0
+  }
+}

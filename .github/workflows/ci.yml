@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CP-SAT dependency
+        run: |
+          # ortools 9.15 needs protobuf>=6.31, which conflicts with kicad-mcp-pro's kicad-python (protobuf<6); 9.12 is the newest overlapping.
+          python -m pip install "ortools==9.12.4544"
+      - name: Unit tests
+        run: python -m unittest discover -s tests/unit -v
+      - name: Integration tests
+        run: python -m unittest discover -s tests/integration -v

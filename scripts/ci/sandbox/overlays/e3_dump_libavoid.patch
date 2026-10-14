@@ -1,0 +1,48 @@
+# Writes the exact libavoid payload, raw routes and endpoint table of every grouped routing call
+# to SBX_DUMP_DIR (set automatically by 'run'), plus <call>.accepted.jsonl: the route the engine settled
+# on for each edge after snapping, simplification and its acceptance checks. Feed the dumps to
+# 'analyze-dumps' or 'replay' (review findings B1-B3, experiments 2 and 3).
+--- a/backend/kicad/mcp_extended_server.py
++++ b/backend/kicad/mcp_extended_server.py
+@@ -2663,6 +2663,28 @@
+             )
+         raw_routes = json.loads(completed.stdout)
+ 
++        # SANDBOX OVERLAY e3_dump_libavoid: record the exact libavoid input and
++        # output of every grouped routing call under SBX_DUMP_DIR.
++        _sbx_dump_dir = os.environ.get("SBX_DUMP_DIR")
++        if _sbx_dump_dir:
++            import time as _sbx_time
++            from pathlib import Path as _SbxPath
++
++            _SbxPath(_sbx_dump_dir).mkdir(parents=True, exist_ok=True)
++            _sbx_dump_stem = f"libavoid-{_sbx_time.time_ns()}"
++            _SbxPath(_sbx_dump_dir, f"{_sbx_dump_stem}.json").write_text(
++                json.dumps(
++                    {
++                        "protect_wires": protect_wires,
++                        "payload": payload,
++                        "raw_routes": raw_routes,
++                        "endpoints": endpoint_info,
++                    },
++                    default=str,
++                ),
++                encoding="utf-8",
++            )
++
+         grid = SCHEMATIC_GRID_MM
+ 
+         def snap_point(raw: dict[str, Any]) -> tuple[float, float]:
+@@ -3014,6 +3036,12 @@
+                 work.insert(0, item)
+                 continue
+ 
++            # SANDBOX OVERLAY e3_dump_libavoid: the route the engine settled on for this edge (after
++            # snapping, simplification and the acceptance checks), one JSON line per edge.
++            if _sbx_dump_dir:
++                with _SbxPath(_sbx_dump_dir, f"{_sbx_dump_stem}.accepted.jsonl").open("a", encoding="utf-8") as _sbx_out:
++                    _sbx_out.write(json.dumps({"edge": item["id"], "points": [list(pt) for pt in points]}) + "\n")
++
+             added: list[dict[str, Any]] = []
+             for first_point, second_point in zip(
+                 points,

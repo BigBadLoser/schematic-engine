@@ -1,0 +1,22 @@
+{
+  "demo_ampac": {
+    "corners": 9,
+    "crossings": 0,
+    "wire_length_mm": 330.2
+  },
+  "demo_buck": {
+    "corners": 1,
+    "crossings": 0,
+    "wire_length_mm": 68.58
+  },
+  "demo_lm317": {
+    "corners": 11,
+    "crossings": 0,
+    "wire_length_mm": 205.74
+  },
+  "demo_opamp": {
+    "corners": 7,
+    "crossings": 0,
+    "wire_length_mm": 234.95
+  }
+}
