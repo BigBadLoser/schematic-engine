@@ -1342,7 +1342,7 @@ def _place_group(
                 if in_pin is not None:
                     terminal_input_net = next(name for name in pins_by_net
                                               if name not in roles.rails and net_pin(ref, name) == in_pin)
-            if multi and out_pin is None:
+            if multi and out_pin is None and not (index == len(chain) - 1 and in_pin is not None and _is_one_sided(symbol)):
                 out_pin = infer_terminal_pin(ref, earlier or terminal_input_net, 1, prefer_feedback=True)
                 if out_pin is not None:
                     terminal_output_net = next(name for name in pins_by_net
@@ -1422,6 +1422,9 @@ def _place_group(
             def chain_candidate(o, g):
                 if source_upright:
                     return source_candidate(o, g)
+                if one_sided and at_end and multi:
+                    # a connector at the end of a row has its pins toward the circuit (an output connector's point left)
+                    return faces_circuit(g) and (rails_beyond_chain_pin(g) or not rails_fit)
                 if multi:
                     if best_flow < 2:
                         return flow_score(g) == best_flow
