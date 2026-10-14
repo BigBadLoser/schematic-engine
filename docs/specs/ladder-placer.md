@@ -557,6 +557,64 @@ placement format is in its docstring). `sandbox.py ladder-fixtures` rewrites the
 In the harness, `KICAD_AI_LADDER_PLACEMENT=<file or folder>` takes positions from placement files instead of
 `ladder_layout`, `KICAD_AI_LADDER_SOLVER=cpsat` from `ladder_solve.legalise_with_status` when that module exists.
 
+## 4c. Multi-unit parts: each unit is a placeable (design, 2026-10-14; not built yet)
+
+**What is multi-unit in the corpus.** A KiCad part drawn in several units is several `(symbol ... (unit N))` instances of one
+reference on the sheet; each unit has its own pins, pin numbers are unique over the part, and unit 0 holds graphics and pins
+every unit shows. Reading the five sheets' libraries: only tally_timecode's `U5` (Amplifier_Operational:LM358, units 1 and
+2 two op-amps, unit 3 the power pins 8 and 4) is multi-unit. gamma_preamp's U2 (OPA357), gamma_sipm's U9 and TH1 and the rest
+are single-unit symbols (sub-symbols `_0_0` and `_1_0` only): their wide boxes are their drawings, not a merge. Today's
+`sbx.ladder.merge_units` therefore acts on U5 alone: it asks the server for `U5~2`, `U5~3` (a rename in a copy of the sheet,
+`corpus._split_units`), sets their pins beside unit 1's body and returns one 8-pin, 55 mm part that no row can hold cleanly.
+
+**1. The placeable.** A placeable is `(reference, unit)`, written `U5:1`, `U5:2`, `U5:3` in every engine structure (a plain
+string, so roles, plan, solver, checker and fixtures need no change: `host.partition(".")` and `rsplit(".", 1)` leave a colon
+alone, and no engine code splits references on a colon). A part with one unit keeps its plain reference. The netlist identity
+stays the part's reference: `designators.split_unit("U5:2") -> ("U5", 2)`; a reference with no `:UNIT` is unit None. The
+intent keeps one `SymbolIntent` per part. `intent.expand_units(unit_pins)` (`unit_pins`: reference -> {unit: its pin
+numbers}, which the server's per-unit geometry gives) returns the intent the engine works on: one `SymbolIntent` per unit
+(same library, symbol, value, footprint and properties, reference `U5:1`), each net's endpoints moved to the unit that owns
+the pin, each block's member `U5` replaced by its units, no-connects moved the same way. A pin every unit shows (unit 0) is
+the lowest unit's. A unit no net reaches is dropped from the intent (and left out of the build's unit list only if the
+library marks it optional; otherwise it is placed with the `other` parts): both are rare and neither is in the corpus.
+The map back (`U5:2` -> `U5`, unit 2) is `split_unit`, used by the build and the netlist check.
+
+**2. Roles.** `classify` works on the expanded intent unchanged. Each unit takes the role its pins give: an op-amp unit has
+three or more pins on signal nets, so it is a multi-pin chain part or a hub; two units of one part share no pin number, so the
+pair rule does not join them. A power-only unit (every pin on a rail, `U5:3`) has no signal net to hang from, so it is a
+rail-only part: it stays in `roles.other`, which the layout already stands in the free-supply column (higher rail pin up),
+where people draw a power unit. "Hangs from its rails like a support" is that: the part is tied to its rails, not to a
+sibling unit; a sibling pull is a refinement if the column proves too far.
+
+**3. Solver and heuristic.** Nothing special: `PlacedSymbol.reference` is an opaque string and each unit has its own geometry,
+box and pins. Checked: no split on `:` in `ladder_*`, `placement_refinement` or `placement_plan`; the plan's `net:` column pins
+are a prefix test on a column's `pin`, never on a reference.
+
+**4. Fixtures and harness.** `sbx.ladder.symbols_and_nets` stops calling `merge_units` (deleted with the `~` rename once the
+server resolves units itself); `corpus_inputs` asks the server for `U5:1`, `U5:2`, `U5:3` and expands the intent. The fixture
+files keep their format (the `U5:n` references are ordinary); only `tally_timecode.json` changes. The unit tests add: an
+op-amp part with two units and a power unit expands to three placeables with the right endpoints; the roles give the power
+unit `other` and the op-amp units chain parts; a heuristic layout and the solver place a toy of it.
+
+**5. What the build needs (not started).** Read from the installed MCP Pro and the extended server:
+- *Geometry per unit.* `sch_symbol_geometry` already takes the unit from the placed symbol (`get_pin_positions(library, name,
+  x, y, rotation, unit)`, `get_pin_outward_normals(..., unit)`) but finds the symbol by `_symbol_by_reference`, which returns
+  the first unit; hence the `~` rename. It needs to accept `"U5:2"` (reference and unit) and look up the instance with that
+  unit. Small, in `mcp_extended_server.py`.
+- *Placing a unit.* `sch_add_symbol` and the `symbols` of `sch_build_circuit` take `unit` (`AddSymbolInput.unit`, checked
+  against `get_symbol_available_units`), so a unit is placed by giving its own x, y, rotation and unit under the part's reference.
+- *Net resolution (the blocker).* In `kicad_mcp/tools/schematic.py` the build's `symbol_points`, `symbol_pin_aliases`,
+  `symbol_centers` and `pin_etypes` are dicts keyed by `symbol.reference` (two places, about lines 4805 and 5051), so the second
+  unit of a reference overwrites the first: nets reaching unit 1's pins would not resolve. The fix is to merge per reference
+  (`setdefault(reference, {}).update(...)`; pin numbers are unique over a part, centres kept per unit). That package is
+  external: the extended server patches it at import, so the fix is a patch there, or the build places units with
+  `sch_add_symbol` after resolving nets per unit.
+- *Readback.* `sch_get_symbols` lines already end `unit=N`; `direct_workflow._symbol_placements_from_listing` keys by reference
+  and must key by `U5:N`, and the final rebuild must send each unit's `unit` with its position and rotation.
+- *Netlist check.* `connectivity` and the build's check compare pins by reference: they map `U5:n` to `U5` with `split_unit`.
+- *Unknowns to confirm on a real run:* KiCad prints a multi-unit reference as `U5A`, `U5B`: the build must not rename the
+  field; ERC on a part with an unplaced optional unit.
+
 ## 5. WP3: offline harness (`scripts/ci/sandbox/probes/ladder/harness.py`)
 
 **Done in-house (commit 00d45f8): no WP3 pull request is needed.** The harness is `python scripts/ci/sandbox/sandbox.py
