@@ -476,9 +476,14 @@ WP5 makes the following interpretations explicit (general rules, not fixture set
   times the worst. When it fires the best clean placement found stands and the status says `cp-sat (wall-clock limit)` (an error
   only if none exists yet). bitaxe_power at five seeds gave the same placement twice (0/0/33/0/39/1847.6, seed 7), the two runs
   side by side at 302 and 303 s.
+- `_FULL_MARGIN` retested with five seeds, the 650 s guard, one fixture at a time (through / overlaps / clearance / short /
+  crossings / wire mm, wall s; without, then with): amp 0/0/0/0/0/274.6 to 0/0/0/0/0/246.2 (111, 126 s); gamma_preamp 1/0/0/0/0/179.1
+  to 0/0/0/0/0/185.2; uno_r4_power 0/0/3/0/3/495.8 to 0/0/0/0/2/539.0 (133, 143 s); bitaxe_power 0/0/33/0/39/1847.6 to
+  0/0/22/0/40/2711.7 (212, 154 s); tally_timecode clearance 20 to 18; bms_supply, lm317, pmod_hv and gamma_preamp 1 to 6 mm
+  longer; the other six the same. No fixture has more throughs or shorts; adopted.
 - Known gap, model against checker: the one fault the solver does not see on amp (N_L2_1 through R7) is the checker's margin: a drop that does not carry a
   part's own pin keeps 0.5 mm from that part's body unless it runs over one of the part's tips, and the solver shortened the
-  drop by the margin at both ends so that one landing on a host's tip is let. `_FULL_MARGIN` (off) keeps the whole drop out
+  drop by the margin at both ends so that one landing on a host's tip is let. `_FULL_MARGIN` (on since the seeds, below) keeps the whole drop out
   unless it runs along a tip: amp has 0 through but 2 crossings, gamma_preamp 0 through, and the model is slower
   (gamma_sipm and uno_r4_power run out of wall time), so it stays off.
 - A stacked part may have several pins on the junction (a power FET's source pins), all facing the other part and at one
