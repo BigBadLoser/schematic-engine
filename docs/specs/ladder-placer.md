@@ -25,9 +25,10 @@ for any part the rules do not cover.
 
 ## 2. Repository facts the implementer needs
 
-- Repo `C:\Users\Trey\Documents\Code`, branch `engine/straight-over-compact` (PR #8). Windows. Run Python from the
-  sandbox venv `scripts/ci/sandbox/.work/venv/Scripts/python.exe` with `PYTHONPATH=.`; unit tests are `unittest`
-  modules under `tests/unit/` (`python -m unittest discover -s tests/unit -p "test_*.py"`, about 690 pass). The
+- Repo `BigBadLoser/schematic-engine` (local `C:\Users\Trey\Documents\schematic-engine`), branch `main`; work happens
+  in worktrees under `.worktrees/`. Windows. Run Python from the sandbox venv
+  `scripts/ci/sandbox/.work/venv/Scripts/python.exe` with `PYTHONPATH=.`; unit tests are `unittest` modules under
+  `tests/unit/` (`python -m unittest discover -s tests/unit -p "test_*.py"`, about 720 pass). The
   engine is deterministic: iterate in sorted order, no randomness, no decisions from set or dict order.
 - Geometry types in `backend/schematic/placement_refinement.py`: `PlacedSymbol(reference, position, orientation,
   geometry: {Orientation: OrientedGeometry(pins: {pin: PinGeometry(point, normal)}, box, body)}, movable, ordered,
