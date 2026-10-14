@@ -7,6 +7,34 @@ from backend.kicad.netlist import Endpoint, SchematicNetlist
 from .intent import SchematicIntent
 
 
+def collapse_units(intent: SchematicIntent) -> SchematicIntent:
+    """The intent with every unit placeable (``U5:2``) named by its part (``U5``): the netlist's identity is the part's.
+
+    An intent with no unit placeable comes back as it was."""
+    from dataclasses import replace
+
+    from .designators import split_unit
+    from .intent import PinEndpoint
+
+    if not any(split_unit(symbol.reference)[1] is not None for symbol in intent.symbols):
+        return intent
+
+    def whole(endpoint: PinEndpoint) -> PinEndpoint:
+        return PinEndpoint(split_unit(endpoint.reference)[0], endpoint.pin)
+
+    symbols, seen = [], set()
+    for symbol in intent.symbols:
+        part = split_unit(symbol.reference)[0]
+        if part not in seen:
+            seen.add(part)
+            symbols.append(replace(symbol, reference=part))
+    nets = tuple(replace(net, endpoints=tuple(whole(e) for e in net.endpoints), drivers=tuple(whole(e) for e in net.drivers),
+                         sinks=tuple(whole(e) for e in net.sinks)) for net in intent.nets)
+    connections = tuple(replace(c, source=whole(c.source), target=whole(c.target)) for c in intent.connections)
+    return SchematicIntent(symbols=tuple(symbols), nets=nets, connections=connections,
+                           no_connects=tuple(whole(e) for e in intent.no_connects))
+
+
 def verify_intent_netlist(intent: SchematicIntent, netlist: SchematicNetlist) -> dict[str, Any]:
     """Require exact pin equivalence classes, independent of generated net names.
 
@@ -14,6 +42,7 @@ def verify_intent_netlist(intent: SchematicIntent, netlist: SchematicNetlist) ->
     Their effect is still checked through the physical pins they connect.
     Unspecified physical pins may be isolated, but may not acquire connections.
     """
+    intent = collapse_units(intent)
     intent_virtual_refs = {
         symbol.reference for symbol in intent.symbols if symbol.library == "power"
     }

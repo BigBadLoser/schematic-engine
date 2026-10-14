@@ -10,6 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from backend.schematic.designators import split_unit, unit_reference
+from backend.schematic.symbol_edit import find_symbol_block
+
 
 _RELATIONS = {"left_of", "right_of", "above", "below"}
 
@@ -62,13 +65,32 @@ def _symbol_by_reference(data: dict[str, Any], reference: str) -> dict[str, Any]
         (*data.get("symbols", []), *data.get("power_symbols", [])),
         key=_symbol_order_key,   # a multi-unit part's first match must not depend on the sheet's UUID order
     )
-    match = next(
-        (item for item in symbols if str(item.get("reference", "")) == reference),
-        None,
-    )
+    # "U5:2" names one unit of a multi-unit part (the placeable the layout works with); a plain reference is its first unit
+    part, unit = split_unit(reference)
+    match = None
+    if unit is not None:
+        match = next(
+            (item for item in symbols
+             if str(item.get("reference", "")) == part and int(item.get("unit", 1) or 1) == unit),
+            None,
+        )
+    if match is None:
+        match = next(
+            (item for item in symbols if str(item.get("reference", "")) == reference),
+            None,
+        )
     if match is None:
         raise ValueError(f"Reference not found: {reference}")
     return match
+
+
+def _placeable_name(item: dict[str, Any], instances: dict[str, int]) -> str:
+    """A placed symbol's name in the terminal planner's maps: its reference, or ``U5:2`` when the reference is drawn in
+    several units (each unit is a symbol of its own with its own body and pins)."""
+    reference = str(item["reference"])
+    if instances.get(reference, 1) > 1:
+        return unit_reference(reference, int(item.get("unit", 1) or 1))
+    return reference
 
 
 def build_extended_server(profile: str = "schematic_authoring"):
@@ -574,7 +596,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
                 x = float(symbol.get("x", symbol.get("x_mm", 0.0)) or 0.0)
                 y = float(symbol.get("y", symbol.get("y_mm", 0.0)) or 0.0)
                 await call_checked(
-                    "sch_move_symbol",
+                    "sch_move_unit" if split_unit(reference)[1] is not None else "sch_move_symbol",
                     {
                         "reference": reference,
                         "x_mm": x + dx,
@@ -639,6 +661,9 @@ def build_extended_server(profile: str = "schematic_authoring"):
             if str(item.get("reference", "")).strip() and str(item.get("reference", "")).strip() not in ignore
         ]
         symbol_entries.sort(key=_symbol_order_key)
+        instances: dict[str, int] = {}
+        for item in symbol_entries:
+            instances[str(item["reference"])] = instances.get(str(item["reference"]), 0) + 1
         # Every pin tip, wire and text box already on the sheet: a stub that
         # touches the first two would join two nets, and text is an obstacle
         # too (a power symbol's Value text, a symbol's reference and value, pin
@@ -652,7 +677,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
             tight=tight,
             clearance=max(SCHEMATIC_GRID_MM, float(clearance_mm)),
             bounds_by_ref={
-                str(item["reference"]): terminal_bounds(item)
+                _placeable_name(item, instances): terminal_bounds(item)
                 for item in symbol_entries
             },
             pin_tips={
@@ -5008,6 +5033,24 @@ def build_extended_server(profile: str = "schematic_authoring"):
         return json.dumps({"mirrored": {str(ref): str(axis) for ref, axis in mirrors.items()}}, sort_keys=True)
 
     @server.tool()
+    def sch_move_unit(reference: str, x_mm: float, y_mm: float, snap_to_grid: bool = True) -> str:
+        """Move one placed instance by its placeable name: ``U5:2`` is unit 2 of ``U5`` (a plain reference is its first instance).
+
+        MCP Pro's ``sch_move_symbol`` finds a symbol by its reference alone, so it cannot say which unit of a multi-unit part
+        to move; this one can. The instance and its field texts move together (``backend.schematic.symbol_edit.move_symbol``).
+        """
+        from kicad_mcp.tools import schematic as schematic_tools
+
+        from backend.schematic.symbol_edit import move_symbol
+
+        x, y = float(x_mm), float(y_mm)
+        if snap_to_grid:
+            x = round(x / SCHEMATIC_GRID_MM) * SCHEMATIC_GRID_MM
+            y = round(y / SCHEMATIC_GRID_MM) * SCHEMATIC_GRID_MM
+        schematic_tools._transactional_write_to_schematic(lambda content: move_symbol(content, str(reference), x, y))
+        return json.dumps({"reference": str(reference), "x_mm": round(x, 4), "y_mm": round(y, 4)}, sort_keys=True)
+
+    @server.tool()
     def sch_frame_functional_blocks(
         blocks: list[dict[str, Any]],
         padding_mm: float = 5.08,
@@ -5200,7 +5243,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
         def mutator(content: str) -> str:
             updated = content
             for reference in references:
-                match = schematic_tools._find_placed_symbol_block(updated, reference)
+                match = find_symbol_block(updated, reference)
                 if match is None:
                     raise ValueError(f"Reference not found: {reference}")
                 block, start, end, _parsed = match
@@ -5251,7 +5294,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
                 field = str(entry.get("field", "")).strip()
                 if not reference or field not in {"Reference", "Value"}:
                     raise ValueError("a field placement needs a reference and a field (Reference or Value)")
-                match = schematic_tools._find_placed_symbol_block(updated, reference)
+                match = find_symbol_block(updated, reference)
                 if match is None:
                     raise ValueError(f"Reference not found: {reference}")
                 block, start, end, _parsed = match
@@ -5381,6 +5424,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
         allowed.add("sch_frame_functional_blocks")
         allowed.add("sch_mark_no_connect_pins")
         allowed.add("sch_modify_field_orientation")
+        allowed.add("sch_move_unit")
     return server
 
 

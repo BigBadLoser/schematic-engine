@@ -142,10 +142,10 @@ class LibraryTests(unittest.TestCase):
             )
             self.assertEqual(corpus.resolve_libraries(sheet, SHEET, None)["mylib"], "project")
 
-    def test_second_units_get_references_of_their_own_in_the_copy(self):
+    def test_a_part_placed_in_several_units_is_listed_by_its_unit_numbers(self):
         split, units = corpus._split_units(SHEET)
-        self.assertEqual(units, {"U1": ["U1~2"]})
-        self.assertIn('"U1~2"', split)
+        self.assertEqual(units, {"U1": [1, 2]})
+        self.assertEqual(split, SHEET)                  # the sheet is read as it is: the server finds a unit by its number
 
 
 def payload_for(*references: str, pins: int = 2) -> dict:
@@ -160,16 +160,23 @@ def payload_for(*references: str, pins: int = 2) -> dict:
 
 
 class GeometryTests(unittest.TestCase):
-    def test_units_become_one_symbol_with_every_pin(self):
-        payload = payload_for("U1", "U1~2")
-        payload["symbols"]["U1~2"]["orientations"] = [
-            {**o, "pins": {"7": [1.0, 0.0, 1.0, 0.0]}} for o in payload["symbols"]["U1~2"]["orientations"]
+    def test_a_multi_unit_part_is_expanded_to_one_symbol_per_unit_with_its_own_pins(self):
+        from backend.schematic.intent import expand_units
+        built = corpus.circuit_from(ENTRY, demos.parse_netlist(NETLIST), SHEET)
+        expanded = expand_units(built.intent, {"U1": {1: {"1", "2"}, 2: {"3"}}})
+        self.assertEqual({s.reference for s in expanded.symbols}, {"J1", "R1", "U1:1", "U1:2"})
+        payload = payload_for("J1", "R1")
+        payload["symbols"]["U1:1"] = payload_for("U1:1", pins=2)["symbols"]["U1:1"]
+        payload["symbols"]["U1:2"] = payload_for("U1:2", pins=1)["symbols"]["U1:2"]
+        payload["symbols"]["U1:2"]["orientations"] = [
+            {**o, "pins": {"3": o["pins"]["1"]}} for o in payload["symbols"]["U1:2"]["orientations"]
         ]
-        merged = ladder.merge_units(payload, {"U1": ["U1~2"]})
-        self.assertNotIn("U1~2", merged["symbols"])
-        pins = merged["symbols"]["U1"]["orientations"][0]["pins"]
-        self.assertEqual(sorted(pins), ["1", "2", "7"])
-        self.assertGreater(pins["7"][0], 2.0)               # beside the first unit's body, not on its pins
+        symbols, nets, _reach, _half = ladder.symbols_and_nets(expanded, payload)
+        by_reference = {s.reference: s for s in symbols}
+        self.assertEqual(sorted(by_reference["U1:1"].geometry[by_reference["U1:1"].orientation].pins), ["1", "2"])
+        self.assertEqual(sorted(by_reference["U1:2"].geometry[by_reference["U1:2"].orientation].pins), ["3"])
+        pins = {c.net: {p for p, _ in [(r, q) for r, q in c.pins]} for c in nets}
+        self.assertIn("U1:2", {r for c in nets for r, _p in c.pins})                # GND's U1 pin 3 is unit 2's
 
     def test_symbols_nets_and_reach_come_from_the_intent(self):
         built = corpus.circuit_from(ENTRY, demos.parse_netlist(NETLIST), SHEET)

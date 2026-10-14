@@ -557,12 +557,12 @@ placement format is in its docstring). `sandbox.py ladder-fixtures` rewrites the
 In the harness, `KICAD_AI_LADDER_PLACEMENT=<file or folder>` takes positions from placement files instead of
 `ladder_layout`, `KICAD_AI_LADDER_SOLVER=cpsat` from `ladder_solve.legalise_with_status` when that module exists.
 
-## 4c. Multi-unit parts: each unit is a placeable (design, 2026-10-14; not built yet)
+## 4c. Multi-unit parts: each unit is a placeable (2026-10-14; built)
 
 **What is multi-unit in the corpus.** A KiCad part drawn in several units is several `(symbol ... (unit N))` instances of one
 reference on the sheet; each unit has its own pins, pin numbers are unique over the part, and unit 0 holds graphics and pins
 every unit shows. Reading the five sheets' libraries: only tally_timecode's `U5` (Amplifier_Operational:LM358, units 1 and
-2 two op-amps, unit 3 the power pins 8 and 4) is multi-unit. gamma_preamp's U2 (OPA357), gamma_sipm's U9 and TH1 and the rest
+2 two op-amps, unit 3 the power pins 8 and 4) is multi-unit. gamma_preamp's U2 (OPA357), gamma_sipm's U9 and TH1, pmod_hv's B1 (IAS0105D24, sub-symbols `_0_0` and `_0_1` only) and the rest
 are single-unit symbols (sub-symbols `_0_0` and `_1_0` only): their wide boxes are their drawings, not a merge. Today's
 `sbx.ladder.merge_units` therefore acts on U5 alone: it asks the server for `U5~2`, `U5~3` (a rename in a copy of the sheet,
 `corpus._split_units`), sets their pins beside unit 1's body and returns one 8-pin, 55 mm part that no row can hold cleanly.
@@ -596,24 +596,35 @@ files keep their format (the `U5:n` references are ordinary); only `tally_timeco
 op-amp part with two units and a power unit expands to three placeables with the right endpoints; the roles give the power
 unit `other` and the op-amp units chain parts; a heuristic layout and the solver place a toy of it.
 
-**5. What the build needs (not started).** Read from the installed MCP Pro and the extended server:
-- *Geometry per unit.* `sch_symbol_geometry` already takes the unit from the placed symbol (`get_pin_positions(library, name,
-  x, y, rotation, unit)`, `get_pin_outward_normals(..., unit)`) but finds the symbol by `_symbol_by_reference`, which returns
-  the first unit; hence the `~` rename. It needs to accept `"U5:2"` (reference and unit) and look up the instance with that
-  unit. Small, in `mcp_extended_server.py`.
-- *Placing a unit.* `sch_add_symbol` and the `symbols` of `sch_build_circuit` take `unit` (`AddSymbolInput.unit`, checked
-  against `get_symbol_available_units`), so a unit is placed by giving its own x, y, rotation and unit under the part's reference.
-- *Net resolution (the blocker).* In `kicad_mcp/tools/schematic.py` the build's `symbol_points`, `symbol_pin_aliases`,
-  `symbol_centers` and `pin_etypes` are dicts keyed by `symbol.reference` (two places, about lines 4805 and 5051), so the second
-  unit of a reference overwrites the first: nets reaching unit 1's pins would not resolve. The fix is to merge per reference
-  (`setdefault(reference, {}).update(...)`; pin numbers are unique over a part, centres kept per unit). That package is
-  external: the extended server patches it at import, so the fix is a patch there, or the build places units with
-  `sch_add_symbol` after resolving nets per unit.
-- *Readback.* `sch_get_symbols` lines already end `unit=N`; `direct_workflow._symbol_placements_from_listing` keys by reference
-  and must key by `U5:N`, and the final rebuild must send each unit's `unit` with its position and rotation.
-- *Netlist check.* `connectivity` and the build's check compare pins by reference: they map `U5:n` to `U5` with `split_unit`.
-- *Unknowns to confirm on a real run:* KiCad prints a multi-unit reference as `U5A`, `U5B`: the build must not rename the
-  field; ERC on a part with an unplaced optional unit.
+**5. The build (done without touching MCP Pro).** The direct build runs on the expanded intent whenever the placement names
+units (`U5:1`, ...); a circuit with none runs exactly the plain-reference path (the four demos' sheets are identical to the
+run before, compared with every UUID and pin order normalised). What was needed, all in code we own:
+- `sch_build_circuit` is given one entry per unit (`SymbolIntent.to_mcp` sends `U5:2` as reference `U5`, unit 2; `AddSymbolInput`
+  has `unit`). No nets are passed to it, so MCP Pro's per-reference pin maps (the blocker I saw in its net resolution, keyed
+  by `symbol.reference`) are not on the path; the nets are routed by our own pin tools afterwards.
+- `build_direct` reads each unit's pins from `sch_symbol_geometry` (`U5:2`) once the symbols exist and expands the intent
+  there (`intent.expand_units`).
+- The server accepts a placeable wherever it takes a reference: `_symbol_by_reference` and `symbol_edit.find_symbol_block`
+  find the instance by reference and unit; the new tool `sch_move_unit` (`symbol_edit.move_symbol`) moves one unit with its
+  field texts (MCP Pro's `sch_move_symbol` cannot say which unit); `sch_translate_references_to_margin`, `sch_set_symbol_mirror`,
+  `sch_place_fields` and `sch_modify_field_orientation` use them.
+- The sheet scene (`kicad_geometry`) names a part drawn in several units by placeable (body `U5:2:graphic`, pin
+  `U5:2.5`, fields `U5:2:field:Reference`), so every consumer that looks a pin or a text owner up by the intent's names
+  (terminal planner, shared-net and pin routing, field planner, the terminal sheet's `bounds_by_ref`) finds its own unit
+  and treats the other units as foreign symbols, which they are.
+- `_symbol_placements_from_listing` keys the lines of a part listed several times by `U5:N`; `_verify_references` and
+  `connectivity.collapse_units` (netlist check) map a placeable to its part with `split_unit`.
+- The harness: `corpus._split_units` only lists the unit numbers (no rename of the sheet copy); `corpus_inputs` asks for each
+  unit; `ladder_pose` expands the intent from the symbols it is given, leaves a power unit the layout placed in its supply
+  column, and treats a part the layout could not place as `other` (the heuristic is run partial when a slot is missing).
+
+Measured on tally_timecode (the one circuit with a split part): heuristic through/overlaps/clearance/short/crossings/wire
+4/1/19/3/8/944.1 before (U5 merged) and 6/1/18/0/5/908.0 after; the solver (budget 20) 6/-/20/3/9/676.9 before and
+4/-/20/1/6/635.0 after. The build through the sandbox (`--placement ladder` with the solver) passes the netlist check and
+the connectivity gate; ERC reports no error and three warnings that the sheet's library `Amplifier_Operational_sbx` (the
+sandbox's renamed copy of the embedded LM358) is not in its configuration, once per unit instance, and nothing about the units
+(no unplaced-unit or duplicate-reference finding). With the heuristic placement alone the build stops in the router
+(`MIC_PASSTHROUGH` crosses `J8`); that is the placement, not the units.
 
 ## 5. WP3: offline harness (`scripts/ci/sandbox/probes/ladder/harness.py`)
 

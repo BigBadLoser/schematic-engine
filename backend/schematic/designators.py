@@ -38,3 +38,21 @@ def is_source(reference: str, library: str = "", symbol_name: str = "", role: st
     if library_name == "Device" and symbol_name.lower().startswith("battery"):
         return True
     return is_source_reference(reference)
+
+
+UNIT_SEPARATOR = ":"
+
+
+def unit_reference(reference: str, unit: int) -> str:
+    """The placeable of one unit of a multi-unit part: ``U5`` unit 2 is ``U5:2``."""
+    return f"{reference}{UNIT_SEPARATOR}{unit}"
+
+
+def split_unit(placeable: str) -> tuple[str, int | None]:
+    """The part a placeable belongs to and its unit: ``"U5:2"`` is ``("U5", 2)``, a plain reference ``(reference, None)``.
+
+    The netlist identity of a unit placeable is its part's reference; only the layout and the build tell the units apart."""
+    reference, separator, unit = placeable.rpartition(UNIT_SEPARATOR)
+    if separator and reference and unit.isdigit():
+        return reference, int(unit)
+    return placeable, None

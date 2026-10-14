@@ -165,6 +165,30 @@ class PoseTests(unittest.TestCase):
         self.assertEqual(moved["R1"].position, (60.96, 5.08))
         self.assertIn("chain main: V1 -> U1", ladder.roles_summary(result.roles))
 
+    def test_a_part_the_layout_leaves_out_joins_the_other_parts_and_a_placed_unit_stays_where_it_was_put(self):
+        roles = SimpleNamespace(chains={"main": ("V1", "U1")}, attachments={}, rungs={}, feedback={}, pairs=(), other=("R1",))
+        fake_roles = SimpleNamespace(classify=lambda _intent, counts: roles)
+        placed = {"U1": Placement((12.7, 2.54), Orientation(0, "")), "V1": Placement((0.0, 0.0), Orientation(0, ""))}
+        fake_layout = SimpleNamespace(ladder_layout=lambda syms, nets, found, *, text_widths: placed)
+        with mock.patch.dict(sys.modules, {"backend.schematic.ladder_roles": fake_roles, "backend.schematic.ladder_layout": fake_layout}):
+            result = ladder.ladder_pose(symbols(), [], intent())
+        self.assertEqual(set(result.roles.other), {"R1"})                # R1 was already other; nothing else was left out
+        leftover = SimpleNamespace(chains={"main": ("V1", "U1")}, attachments={}, rungs={}, feedback={}, pairs=(), other=())
+        fake_roles = SimpleNamespace(classify=lambda _intent, counts: leftover)
+        with mock.patch.dict(sys.modules, {"backend.schematic.ladder_roles": fake_roles, "backend.schematic.ladder_layout": fake_layout}):
+            result = ladder.ladder_pose(symbols(), [], intent())
+        self.assertEqual(set(result.roles.other), {"R1"})                # the part the layout did not place
+
+    def test_the_units_a_symbol_list_holds_expand_the_intent(self):
+        from backend.schematic.intent import NetIntent, PinEndpoint, SchematicIntent, SymbolIntent
+        parts = symbols()
+        unit_symbols = [replace(s, reference="U1:1") if s.reference == "U1" else s for s in parts]
+        unit_symbols.append(replace(next(s for s in parts if s.reference == "U1"), reference="U1:2"))
+        pins = ladder.unit_pins_of(unit_symbols)
+        self.assertEqual(sorted(pins["U1"]), [1, 2])
+        whole = SchematicIntent(symbols=(SymbolIntent("U1", "Device", "R", "u"),), nets=(NetIntent("n", (PinEndpoint("U1", "1"),)),))
+        self.assertEqual(ladder.expand_for(parts, whole), whole)         # no unit placeable in the symbols: unchanged
+
     def test_text_widths_are_the_wider_of_reference_and_value(self):
         widths = ladder.text_widths(intent())
         self.assertEqual(sorted(widths), ["R1", "U1", "V1"])

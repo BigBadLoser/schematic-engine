@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
+
+from .designators import split_unit, unit_reference
 
 if TYPE_CHECKING:
     from .relations import SchematicRelation
@@ -58,13 +61,17 @@ class SymbolIntent:
     def to_mcp(self) -> dict[str, object]:
         # Semantic-only fields such as role deliberately stay above the MCP
         # symbol schema unless MCP Pro explicitly exposes them.
+        # a unit placeable (``U5:2``) is the part's own reference and its unit
+        reference, unit = split_unit(self.reference)
         payload: dict[str, object] = {
-            "reference": self.reference,
+            "reference": reference,
             "library": self.library,
             "symbol_name": self.symbol_name,
             "value": self.value,
             "footprint": self.footprint,
         }
+        if unit is not None:
+            payload["unit"] = unit
         if self.properties:
             payload["properties"] = dict(self.properties)
         return payload
@@ -420,3 +427,83 @@ class SchematicIntent:
                 return block
         return None
 
+
+
+def expand_units(intent: SchematicIntent, unit_pins: "Mapping[str, Mapping[int, Collection[str]]]") -> SchematicIntent:
+    """The intent the layout works on when a multi-unit part is several placeables.
+
+    ``unit_pins`` maps a reference to ``{unit: the pin numbers that unit draws}`` (what the server's per-unit geometry
+    reports).  Each part with more than one unit becomes one symbol per unit that a net or no-connect reaches, with the
+    reference ``U5:1``, ``U5:2`` (``designators.unit_reference``); every endpoint moves to the unit that owns its pin (a
+    pin several units draw belongs to the lowest of them), a block's member ``U5`` becomes its units, and a hint naming
+    the part names its first unit.  A unit nothing reaches is not a placeable.  Parts with one unit are untouched, and
+    an intent with no multi-unit part comes back as it was.  ``relations`` are passed through as they are."""
+    from dataclasses import replace
+
+    owner: dict[str, dict[str, int]] = {}
+    for reference, units in unit_pins.items():
+        if len(units) < 2:
+            continue
+        pins: dict[str, int] = {}
+        for unit in sorted(units):
+            for pin in units[unit]:
+                pins.setdefault(str(pin), unit)
+        owner[reference] = pins
+    if not owner:
+        return intent
+
+    def moved(endpoint: PinEndpoint) -> PinEndpoint:
+        pins = owner.get(endpoint.reference)
+        if pins is None:
+            return endpoint
+        if endpoint.pin not in pins:
+            raise ValueError(f"{endpoint.token}: no unit of {endpoint.reference} draws pin {endpoint.pin}")
+        return PinEndpoint(unit_reference(endpoint.reference, pins[endpoint.pin]), endpoint.pin)
+
+    def moved_all(endpoints: tuple[PinEndpoint, ...]) -> tuple[PinEndpoint, ...]:
+        return tuple(moved(endpoint) for endpoint in endpoints)
+
+    nets = tuple(
+        replace(net, endpoints=moved_all(net.endpoints), drivers=moved_all(net.drivers), sinks=moved_all(net.sinks))
+        for net in intent.nets
+    )
+    connections = tuple(
+        replace(item, source=moved(item.source), target=moved(item.target)) for item in intent.connections
+    )
+    no_connects = moved_all(intent.no_connects)
+    reached = {endpoint.reference for net in (*nets, *(c.to_net() for c in connections)) for endpoint in net.endpoints}
+    reached |= {endpoint.reference for endpoint in no_connects}
+    placeables: dict[str, list[str]] = {}
+    symbols: list[SymbolIntent] = []
+    for symbol in intent.symbols:
+        if symbol.reference not in owner:
+            symbols.append(symbol)
+            continue
+        names = [unit_reference(symbol.reference, unit) for unit in sorted(set(owner[symbol.reference].values()))]
+        names = [name for name in names if name in reached]
+        placeables[symbol.reference] = names
+        symbols.extend(replace(symbol, reference=name) for name in names)
+    blocks = []
+    for block in intent.blocks:
+        members: list[str] = []
+        for member in block.members:
+            for name in placeables.get(member, [member]):
+                if name not in members:
+                    members.append(name)
+        blocks.append(replace(block, members=tuple(members)) if tuple(members) != block.members else block)
+
+    def first(reference: str) -> str:
+        return placeables[reference][0] if placeables.get(reference) else reference
+
+    hints = []
+    for hint in intent.placement_hints:
+        target = hint.target
+        if hint.kind == "decouples":
+            part, _dot, pin = target.partition(".")
+            if part in owner and pin in owner[part]:
+                target = f"{unit_reference(part, owner[part][pin])}.{pin}"
+        elif target in placeables:
+            target = first(target)
+        hints.append(replace(hint, subject=first(hint.subject), target=target))
+    return replace(intent, symbols=tuple(symbols), nets=nets, connections=connections, blocks=tuple(blocks),
+                   placement_hints=tuple(hints), no_connects=no_connects)

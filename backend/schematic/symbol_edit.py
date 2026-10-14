@@ -8,17 +8,49 @@ from __future__ import annotations
 
 import re
 
+from .designators import split_unit
+
 _MIRROR = re.compile(r"\n[ \t]*\(mirror\s+[xy]\)")
 _AT = re.compile(r"(\(at\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\))")
 
 
-def set_mirror(content: str, reference: str, axis: str) -> str:
-    """``content`` with the symbol ``reference`` mirrored about ``axis`` ("x", "y"), or not mirrored when ``axis`` is empty."""
+def find_symbol_block(content: str, reference: str):
+    """The placed instance ``reference`` names, as MCP Pro's ``_find_placed_symbol_block`` returns it, or None.
+
+    ``reference`` may name one unit of a multi-unit part (``U5:2``, spec 4c): the instance of ``U5`` drawn as unit 2. A plain
+    reference is its first instance, as MCP Pro finds it."""
     from kicad_mcp.tools import schematic as schematic_tools
 
+    part, unit = split_unit(reference)
+    if unit is not None:
+        for match in schematic_tools._find_placed_symbol_blocks(content, part):
+            if int(match[3].get("unit", 1) or 1) == unit:
+                return match
+    return schematic_tools._find_placed_symbol_block(content, reference)
+
+
+_ANY_AT = re.compile(r"\(at\s+(-?[\d.]+)\s+(-?[\d.]+)(\s+-?[\d.]+)?\)")
+
+
+def move_symbol(content: str, reference: str, x_mm: float, y_mm: float) -> str:
+    """``content`` with the instance ``reference`` names (a unit, ``U5:2``, or a plain reference) moved so that its anchor is at
+    ``(x_mm, y_mm)``: its own ``(at ...)`` and those of its field texts shift together, as MCP Pro's move does."""
+    match = find_symbol_block(content, reference)
+    if match is None:
+        raise ValueError(f"Reference not found: {reference}")
+    block, start, end, _parsed = match
+    anchor = _ANY_AT.search(block)
+    dx, dy = x_mm - float(anchor.group(1)), y_mm - float(anchor.group(2))
+    moved = _ANY_AT.sub(
+        lambda found: f"(at {_fmt(float(found.group(1)) + dx)} {_fmt(float(found.group(2)) + dy)}{found.group(3) or ''})", block)
+    return content[:start] + moved + content[end:]
+
+
+def set_mirror(content: str, reference: str, axis: str) -> str:
+    """``content`` with the symbol ``reference`` mirrored about ``axis`` ("x", "y"), or not mirrored when ``axis`` is empty."""
     if axis not in ("", "x", "y"):
         raise ValueError(f"A mirror axis is x or y, not {axis!r}")
-    match = schematic_tools._find_placed_symbol_block(content, reference)
+    match = find_symbol_block(content, reference)
     if match is None:
         raise ValueError(f"Reference not found: {reference}")
     block, start, end, _parsed = match

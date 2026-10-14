@@ -370,29 +370,20 @@ def resolve_libraries(sheet: Path, sheet_text: str, stock_dir: Path | None) -> d
     return where
 
 
-def _split_units(sheet_text: str) -> tuple[str, dict[str, list[str]]]:
-    """A sheet whose second and later units of a multi-unit part carry their own references (``U5~2``) so each can be
-    asked for; also those references by part. The text is only rewritten in the copy the server reads."""
-    units: dict[str, list[str]] = {}
-    seen: dict[str, int] = {}
-    pieces, cursor = [], 0
+def _split_units(sheet_text: str) -> tuple[str, dict[str, list[int]]]:
+    """The sheet as it is, and the unit numbers of each part the sheet places in more than one unit (``U5``: 1, 2, 3).
+
+    A part drawn in several units is several instances of one reference; each unit is a placeable of its own (``U5:2``,
+    spec 4c) and the server reads the geometry of the unit it is asked for."""
+    units: dict[str, set[int]] = {}
     for match in re.finditer(r'\n\t\(symbol\n\t\t\(lib_id "', sheet_text):
         start = match.start() + 1
-        end = _balanced(sheet_text, start)
-        block = sheet_text[start:end]
+        block = sheet_text[start:_balanced(sheet_text, start)]
         reference = re.search(r'\(property "Reference" "([^"]*)"', block)
         unit = re.search(r"\(unit (\d+)\)", block)
-        if not reference or not unit or reference.group(1).startswith("#"):
-            continue
-        ref, number = reference.group(1), int(unit.group(1))
-        first = seen.setdefault(ref, number)
-        if number != first:
-            renamed = f"{ref}~{number}"
-            units.setdefault(ref, []).append(renamed)
-            pieces.append((start, end, block.replace(f'"{ref}"', f'"{renamed}"')))
-    for start, end, block in sorted(pieces, reverse=True):  # back to front, so the offsets stay true
-        sheet_text = sheet_text[:start] + block + sheet_text[end:]
-    return sheet_text, units
+        if reference and unit and not reference.group(1).startswith("#"):
+            units.setdefault(reference.group(1), set()).add(int(unit.group(1)))
+    return sheet_text, {ref: sorted(found) for ref, found in units.items() if len(found) > 1}
 
 
 _PIN_TYPE = re.compile(r"\(pin\s+(input|output|bidirectional)(\s+\w+)")
@@ -422,10 +413,10 @@ def passive_two_pin_library(text: str) -> str:
     return "".join(out)
 
 
-def prepare_project(sheet: Path, destination: Path, stock_dir: Path | None) -> tuple[Path, dict[str, list[str]], dict[str, str]]:
-    """A project folder the MCP server can read ``sheet``'s symbol geometry from: the sheet (units split), and a
+def prepare_project(sheet: Path, destination: Path, stock_dir: Path | None) -> tuple[Path, dict[str, list[int]], dict[str, str]]:
+    """A project folder the MCP server can read ``sheet``'s symbol geometry from: the sheet, and a
     ``sym-lib-table`` that points each non-stock library at the project's file or at one written from the sheet's embedded
-    symbols. Returns the sheet copy, the extra-unit references by part, and where each library was resolved."""
+    symbols. Returns the sheet copy, the unit numbers of each multi-unit part, and where each library was resolved."""
     destination.mkdir(parents=True, exist_ok=True)
     text = sheet.read_text(encoding="utf-8")
     where = resolve_libraries(sheet, text, stock_dir)
