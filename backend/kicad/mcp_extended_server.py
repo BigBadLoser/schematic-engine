@@ -5181,6 +5181,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
                 y,
                 rotation,
                 unit,
+                mirror=str(symbol.get("mirror", "") or ""),
             )
             if pin not in positions:
                 raise ValueError(f"Pin {reference}.{pin} was not found")
