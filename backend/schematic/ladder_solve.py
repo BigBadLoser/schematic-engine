@@ -993,12 +993,26 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
         """Grid offsets (x[a] - x[b], y[a] - y[b]) that put two pin tips closer than two grids."""
         if (a, b) not in tip_offsets:
             forbidden = set()
-            for ap in geoms[a].pins.values():
-                for bp in geoms[b].pins.values():
+            for a_number, ap in geoms[a].pins.items():
+                for b_number, bp in geoms[b].pins.items():
                     ox, oy = (_mm(ap.point[i]) - _mm(bp.point[i]) for i in (0, 1))
                     for gx in range(math.floor((-2 * _GRID - ox) / _GRID), math.ceil((2 * _GRID - ox) / _GRID) + 1):
                         for gy in range(math.floor((-2 * _GRID - oy) / _GRID), math.ceil((2 * _GRID - oy) / _GRID) + 1):
                             if (gx * _GRID + ox) ** 2 + (gy * _GRID + oy) ** 2 < (2 * _GRID) ** 2:
+                                forbidden.add((gx, gy))
+                    # Two pins of different nets that point at each other keep room for a stub each (four grids between
+                    # the tips) when they stand in one column: a wire cannot leave either tip through the other part.
+                    net_a, net_b = pin_net.get((a, a_number)), pin_net.get((b, b_number))
+                    if net_a is None or net_b is None or net_a == net_b:
+                        continue
+                    axis = 0 if abs(ap.normal[0]) > .5 else 1 if abs(ap.normal[1]) > .5 else None
+                    if axis is None or abs(bp.normal[axis] + ap.normal[axis]) > .1:
+                        continue
+                    across = 1 - axis
+                    for gx in range(math.floor((-4 * _GRID - ox) / _GRID), math.ceil((4 * _GRID - ox) / _GRID) + 1):
+                        for gy in range(math.floor((-4 * _GRID - oy) / _GRID), math.ceil((4 * _GRID - oy) / _GRID) + 1):
+                            delta = (gx * _GRID + ox, gy * _GRID + oy)     # tip of a minus tip of b
+                            if abs(delta[across]) <= _GRID and 0 < -delta[axis] * ap.normal[axis] < 4 * _GRID:
                                 forbidden.add((gx, gy))
             tip_offsets[a, b] = frozenset(forbidden)
         return tip_offsets[a, b]
