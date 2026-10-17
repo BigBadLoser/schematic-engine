@@ -229,6 +229,7 @@ class GroupRecord:
     lanes: list[tuple[str, str, tuple[str, ...], float]] = field(default_factory=list)          # net, hub pin ("U9.4"), series parts, y
     trunk_rows: dict[str, float] = field(default_factory=dict)
     chain_nets: frozenset = frozenset()
+    followers: dict[str, tuple[str, int]] = field(default_factory=dict)         # a side row's net -> (the part it runs round, +1 below / -1 above)
 
     def chain(self, block: str, ref: str, row_pin: str | None, row_y: float, orientation: Orientation,
               like: str | None = None) -> None:
@@ -345,6 +346,12 @@ def plan_from_record(record: LayoutRecord, symbols: Sequence["PlacedSymbol"], ne
             pins[ref] = row_pin
         close_segment()
         for name, y in sorted(group.side_rows.items()):
+            if name in group.followers:
+                # a run round a part's body lies just beyond the row that part is on, whatever the rows' heights are
+                ref, side = group.followers[name]
+                mine = next((item[3] for item in group.chain_parts if item[1] == ref), None)
+                if mine is not None:
+                    y = mine + side * 0.001
             rows.append((y + dy, 1, name, Row(name, "side", None, ())))
         for name, y in sorted(group.trunk_rows.items()):
             rows.append((y + dy, 2, name, Row(name, "trunk", None, ())))
