@@ -354,11 +354,11 @@ def _collision_count(priced: list[list[tuple[str, Bounds, float, dict[str, int]]
 def _solve_with_continuation(
     fields: list[GeometryItem], priced: list[list[tuple[str, Bounds, float, dict[str, int]]]], pairs: list | None = None,
 ) -> tuple[list[int], str]:
-    """Solve at the normal budget. Only when that ends unproven (deterministic limit) and collisions remain, continue
+    """Solve at the normal budget. Only when that ends unproven (a deterministic or wall-clock limit) and collisions remain, continue
     once at a larger budget, hinted from the first result, and keep the result with fewer collisions (the continuation
     on a tie). A solve that proves optimal takes exactly the normal path."""
     chosen, name = _solve(fields, priced, pairs)
-    if name != "cp-sat (deterministic limit)":
+    if name in ("cp-sat", "greedy", "none"):     # proven, or no CP-SAT run to continue
         return chosen, name
     first_count = _collision_count(priced, chosen)
     if first_count == 0:
