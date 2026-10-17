@@ -48,6 +48,11 @@ FIELD_KINDS = (K.REFERENCE, K.VALUE, K.POWER_TEXT)
 # wall-clock limit made the chosen positions depend on how busy the machine was; the wall clock is only a safety net.
 _SOLVER_DETERMINISTIC_TIME = 25.0
 _SOLVER_SECONDS = 60.0
+# When the normal solve ends unproven with collisions left, one continuation at a larger budget is tried (hinted from
+# the first result) and the result with fewer collisions kept. Measured: sheets that prove at 25 had no overlaps, those
+# that stopped at the limit did; a few of those prove by about 100. Its wall-clock net is wider (100 took 74 s).
+_CONTINUE_DETERMINISTIC_TIME = 100.0
+_CONTINUE_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -303,7 +308,7 @@ def plan_fields(scene: GeometryScene) -> FieldPlan:
         if "Reference" in roles and "Value" in roles:
             combos = [("E", "E"), ("W", "W")] + ([] if roles["Reference"][1] else [("N", "S")])
             pairs.append((roles["Reference"][0], roles["Value"][0], combos))
-    chosen, solver_name = _solve(fields, priced, pairs)
+    chosen, solver_name = _solve_with_continuation(fields, priced, pairs)
     chosen = _clear_of_wires(priced, chosen)
     moves: list[FieldMove] = []
     after: dict[str, int] = defaultdict(int)
@@ -331,8 +336,44 @@ def plan_fields(scene: GeometryScene) -> FieldPlan:
     return FieldPlan(tuple(moves), len(fields), dict(before), dict(after), solver_name)
 
 
+def _collision_count(priced: list[list[tuple[str, Bounds, float, dict[str, int]]]], chosen: list[int]) -> int:
+    """Text, symbol and pin collisions of a choice: against what stays put, and between the chosen texts."""
+    total = 0
+    boxes: list[Bounds] = []
+    for row, pick in zip(priced, chosen):
+        found = row[pick][3]
+        total += found.get("text", 0) + found.get("symbol", 0) + found.get("pin", 0)
+        boxes.append(row[pick][1])
+    for index, first in enumerate(boxes):
+        for second in boxes[index + 1:]:
+            if _overlap(_inflate(first, MARGIN_MM / 2), second):
+                total += 1
+    return total
+
+
+def _solve_with_continuation(
+    fields: list[GeometryItem], priced: list[list[tuple[str, Bounds, float, dict[str, int]]]], pairs: list | None = None,
+) -> tuple[list[int], str]:
+    """Solve at the normal budget. Only when that ends unproven (a deterministic or wall-clock limit) and collisions remain, continue
+    once at a larger budget, hinted from the first result, and keep the result with fewer collisions (the continuation
+    on a tie). A solve that proves optimal takes exactly the normal path."""
+    chosen, name = _solve(fields, priced, pairs)
+    if name in ("cp-sat", "greedy", "none"):     # proven, or no CP-SAT run to continue
+        return chosen, name
+    first_count = _collision_count(priced, chosen)
+    if first_count == 0:
+        return chosen, name
+    again, again_name = _solve(
+        fields, priced, pairs, budget=_CONTINUE_DETERMINISTIC_TIME, seconds=_CONTINUE_SECONDS, hint=chosen,
+    )
+    if again_name == "greedy" or _collision_count(priced, again) > first_count:
+        return chosen, name
+    return again, again_name.replace("cp-sat", "cp-sat, continued", 1)
+
+
 def _solve(
     fields: list[GeometryItem], priced: list[list[tuple[str, Bounds, float, dict[str, int]]]], pairs: list | None = None,
+    budget: float = _SOLVER_DETERMINISTIC_TIME, seconds: float = _SOLVER_SECONDS, hint: list[int] | None = None,
 ) -> tuple[list[int], str]:
     """The index of the chosen candidate for each field, and which solver chose."""
     if not fields:
@@ -380,9 +421,13 @@ def _solve(
             model.Add(both <= sum(val_vars))
             objective.append(-int(SAME_SIDE_BONUS * scale) * both)
     model.Minimize(sum(objective))
+    if hint is not None:
+        for variables, hinted in zip(pick, hint):
+            for c, var in enumerate(variables):
+                model.AddHint(var, 1 if c == hinted else 0)
     solver = cp_model.CpSolver()
-    solver.parameters.max_deterministic_time = _SOLVER_DETERMINISTIC_TIME
-    solver.parameters.max_time_in_seconds = _SOLVER_SECONDS
+    solver.parameters.max_deterministic_time = budget
+    solver.parameters.max_time_in_seconds = seconds
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = 7
     status = solver.Solve(model)
@@ -391,7 +436,7 @@ def _solve(
     chosen = [next(c for c, var in enumerate(variables) if solver.Value(var)) for variables in pick]
     if status == cp_model.OPTIMAL:
         return chosen, "cp-sat"
-    if solver.WallTime() >= _SOLVER_SECONDS:
+    if solver.WallTime() >= seconds:
         return chosen, "cp-sat (wall-clock limit)"
     return chosen, "cp-sat (deterministic limit)"
 
