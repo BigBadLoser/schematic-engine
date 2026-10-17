@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from backend.schematic import FunctionalBlockIntent, NetIntent, PinEndpoint, SchematicIntent, SymbolIntent
 from backend.schematic.designators import split_unit, unit_reference
@@ -126,6 +127,19 @@ class UnitRolesAndLayoutTests(unittest.TestCase):
         self.assertEqual(index, len(row.order) - 1)                         # at the end: no wire of the row runs under it
         self.assertEqual(plan.pins["U1:3"], "")                             # its anchor on the row
         self.assertIn("U1:3", plan.orientations)
+
+    def test_a_bypass_capacitor_across_the_two_rails_of_a_part_stands_beside_that_part(self):
+        symbols, nets, roles = self.toy()
+        symbols = [*symbols, layout_tests.vertical("CB")]
+        nets = [Connection("VCC", (("U1:3", "8"), ("CB", "1")), style="power") if n.net == "VCC" else
+                Connection("GND", (*n.pins, ("CB", "2")), style="power") if n.net == "GND" else n for n in nets]
+        roles = replace(roles, other=(*roles.other, "CB"))
+        plan, placed = plan_and_layout(symbols, nets, roles, text_widths={})
+        by_ref = {s.reference: s for s in symbols}
+        cap, power = layout_tests.extent(by_ref["CB"], placed), layout_tests.extent(by_ref["U1:3"], placed)
+        self.assertLess(min(abs(cap[0] - power[2]), abs(power[0] - cap[2])), 12.0)         # next to the unit whose rails it bypasses
+        row = next(r for r in plan.rows if "CB" in r.order)
+        self.assertEqual(row.order[row.order.index("CB") - 1], "U1:3")
 
     def test_the_solver_places_the_units_too(self):
         try:

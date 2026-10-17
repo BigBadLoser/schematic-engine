@@ -411,7 +411,7 @@ def plan_from_record(record: LayoutRecord, symbols: Sequence["PlacedSymbol"], ne
     sequence_groups = [list(group) for group in sequence]
     # A power unit stands beside a unit of its part: in that unit's row when the unit is at an end of it (a wire runs between
     # two parts of a row and the unit must not stand on it), else with the supplies at the left.
-    for ref, (sibling, orientation, _side) in sorted(record.beside.items()):
+    for ref, (sibling, orientation, _side) in sorted(record.beside.items(), key=lambda item: (item[1][0] in record.beside, item[0])):
         orientations[ref] = orientation
         pins[ref] = ""
         for index, row in enumerate(named):

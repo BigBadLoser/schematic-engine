@@ -272,6 +272,11 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
         deterministic = getattr(result.placements, "deterministic_time", None)
         if deterministic is not None:
             clocks += f"; deterministic {deterministic}"
+        # an ``other`` part the plan lists in a row stands beside the part it serves: the caller leaves it there
+        try:
+            result.placements.beside = frozenset(ref for row in plan.rows if row.kind == "chain" for ref in row.order) & set(roles.other)
+        except AttributeError:
+            pass
         return (result.placements, f"solver cpsat: {result.status}" + (f" ({clocks})" if clocks else ""),
                 getattr(result.placements, "wires", None) or None)
     layout = _ladder_functions()[1]
@@ -286,7 +291,7 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
 
 
 def _layout(symbols: list[Any], nets: list[Any], intent: Any, roles: Any,
-            name: str = "") -> tuple[list[Any], str, Any, list[str]]:
+            name: str = "") -> tuple[list[Any], str, Any, list[str], frozenset]:
     """``layout_step`` and the references the placement left out (a part a partial plan found no slot for), which the caller
     leaves where they are like the parts the roles call ``other``."""
     widened = all_orientations(symbols)
@@ -299,7 +304,7 @@ def _layout(symbols: list[Any], nets: list[Any], intent: Any, roles: Any,
         moved.append(replace(symbol, position=place.position, orientation=place.orientation) if place else symbol)
         if place is None and not symbol.reference.startswith("#") and symbol.reference not in (roles.other if roles else ()):
             left_out.append(symbol.reference)
-    return moved, note, wires, left_out
+    return moved, note, wires, left_out, frozenset(getattr(placements, "beside", ()))
 
 
 def layout_step(symbols: list[Any], nets: list[Any], intent: Any, roles: Any,
@@ -322,11 +327,11 @@ def ladder_pose(symbols: list[Any], nets: list[Any], intent: Any, name: str = ""
     intent = expand_for(symbols, intent)
     try:
         roles = roles_for(symbols, intent)
-        moved, note, wires, left_out = _layout(symbols, nets, intent, roles, name)
+        moved, note, wires, left_out, beside = _layout(symbols, nets, intent, roles, name)
         # a part the layout left out stands with the ``other`` parts, below the placed ones; a unit placeable the layout did place
         # (the power unit of an op-amp, in the supply column) stays where the layout put it
         from backend.schematic.designators import split_unit
-        placed_units = {r for r in roles.other if split_unit(r)[1] is not None and r not in left_out}
+        placed_units = {r for r in roles.other if (split_unit(r)[1] is not None or r in beside) and r not in left_out}
         if left_out or placed_units:
             other = tuple(sorted({*roles.other, *left_out} - placed_units))
             try:

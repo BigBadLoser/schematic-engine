@@ -139,7 +139,9 @@ def posed(fixture: ladder_fixture.Fixture, placements: Mapping[str, Placement], 
     symbols = ladder_fixture.apply_placements(fixture.symbols, placements)
     if fixture.others == "row":
         # a unit of a multi-unit part that the placement put beside its siblings stays there
-        parts = [ref for ref in (*fixture.other, *leftover) if not (split_unit(ref)[1] is not None and ref in placements)]
+        in_rows = {ref for row in fixture.plan.rows if row.kind == "chain" for ref in row.order}
+        parts = [ref for ref in (*fixture.other, *leftover)
+                 if not (ref in placements and (split_unit(ref)[1] is not None or ref in in_rows))]
         symbols = others_row(symbols, parts, nets=fixture.nets)
     return symbols
 

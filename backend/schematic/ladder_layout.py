@@ -32,6 +32,11 @@ _EPS = 1e-7
 _LEAD_MM = 1.27
 
 
+class _Placements(dict):
+    """The placements, with the references the layout stood beside a part they serve (``beside``)."""
+    beside: frozenset = frozenset()
+
+
 def _core(geom: OrientedGeometry) -> tuple[float, float, float, float]:
     """The box without the lead padding: each side a pin points through is pulled in by the lead length.
 
@@ -407,8 +412,19 @@ def ladder_layout(
         return next((other for other in sorted(placed) if other != ref and split_unit(other)[0] == part), None)
 
     beside_refs = [ref for ref in rail_only_others if ref not in placed and sibling_of(ref) is not None]
+
+    def rails_of(ref: str) -> frozenset[str]:
+        return frozenset(name for name, pins in pins_by_net.items() if name in roles.rails for r, _pin in pins if r == ref)
+
+    def pin_count(ref: str) -> int:
+        return max(len(g.pins) for g in by_ref[ref].geometry.values())
+
+    # A two-pin part across two rails (a bypass capacitor) stands beside the multi-pin part (or power unit) whose power pins
+    # use exactly those two rails: the one with the fewest bypass parts so far, then the lowest reference.
+    bypass_refs = [ref for ref in rail_only_others
+                   if ref not in placed and ref not in beside_refs and pin_count(ref) == 2 and len(rails_of(ref)) == 2]
     lone_refs = ([ref for block in lone_blocks for ref in chains[block]]
-                 + [ref for ref in rail_only_others if ref not in placed and ref not in beside_refs])
+                 + [ref for ref in rail_only_others if ref not in placed and ref not in beside_refs and ref not in bypass_refs])
     level = {"supply": 2, "ground": 1, "negative": 0}
 
     def rail_choice(ref: str) -> tuple[Orientation, OrientedGeometry]:
@@ -428,8 +444,11 @@ def ladder_layout(
 
         return min(by_ref[ref].geometry.items(), key=lone_key)
 
-    for ref in beside_refs:
-        sibling = sibling_of(ref)
+    beside_done: set[str] = set()
+
+    def stand_beside(ref: str, sibling: str) -> bool:
+        """Place ``ref`` next to the placed part ``sibling`` (free space to its right, then its left, room above and below for
+        the power symbols); False when there is none."""
         orientation, geometry = rail_choice(ref)
         sib_box = box_of(sibling, placed[sibling])
         stub = max(slot_pitch_mm, 2 * gap_mm) + gap_mm          # the power symbols above and below the unit need room
@@ -448,17 +467,31 @@ def ladder_layout(
                          anchor[0] + core[2] + gap_mm, anchor[1] + core[3] + stub)
                 if not any(grown[0] < o[2] - _EPS and o[0] < grown[2] - _EPS and grown[1] < o[3] - _EPS and o[1] < grown[3] - _EPS
                            for o in others):
-                    found = anchor
-                    found_side = side
+                    found = (anchor, side)
                     break
             if found is not None:
                 break
         if found is None:
-            lone_refs.append(ref)              # no room beside it: the supply column
-            continue
-        placed[ref] = Placement(found, orientation)
+            return False
+        placed[ref] = Placement(found[0], orientation)
+        beside_done.add(ref)
         if record is not None:
-            record.beside[ref] = (sibling, orientation, found_side)
+            record.beside[ref] = (sibling, orientation, found[1])
+        return True
+
+    for ref in beside_refs:
+        if not stand_beside(ref, sibling_of(ref)):
+            lone_refs.append(ref)              # no room beside it: the supply column
+    bypassed: dict[str, int] = defaultdict(int)
+    for ref in bypass_refs:
+        hosts = [host for host in sorted(placed) if host != ref and rails_of(host) == rails_of(ref)
+                 and (pin_count(host) >= 3 or split_unit(host)[1] is not None)]
+        for host in sorted(hosts, key=lambda h: (bypassed[h], h)):
+            if stand_beside(ref, host):
+                bypassed[host] += 1
+                break
+        else:
+            lone_refs.append(ref)
     if lone_refs:
         first = results[0]
         top = min((box_of(ref, pl)[1] for ref, pl in first.items()), default=0.0)
@@ -489,7 +522,9 @@ def ladder_layout(
         for right_ref, b in final_boxes[i + 1:]:
             if a[0] < b[2] - _EPS and b[0] < a[2] - _EPS and a[1] < b[3] - _EPS and b[1] < a[3] - _EPS:
                 raise ValueError(f"Placed symbols overlap: {left_ref} and {right_ref}")
-    return placed
+    result = _Placements(placed)
+    result.beside = frozenset(beside_done)          # parts standing beside a part they serve, which a harness leaves there
+    return result
 
 
 def _side_rows(by_ref, pins_by_net, roles, placed, geoms, row_pins, hang_nets, feedback_nets, attachments,
