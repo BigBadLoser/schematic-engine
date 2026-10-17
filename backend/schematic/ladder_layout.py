@@ -267,6 +267,27 @@ def ladder_layout(
                       for rung in roles.rungs.values() if name in (rung.net_a, rung.net_b)}
         trunk_group[name] = None if len(groups) > 1 else (min(groups) if groups else 0)
 
+    # A net whose pins on one part face opposite sides is wired round that part's body; the side is where the net's other
+    # pins stand, a group below this one's or above it (the groups stack in this order).
+    def group_index(ref):
+        if ref in group_of:
+            return group_of[ref]
+        item = roles.attachments.get(ref)
+        return group_of.get(item.host) if item is not None else None
+
+    follow_sides: dict[int, dict[tuple[str, str], int]] = defaultdict(dict)
+    for name, pins in pins_by_net.items():
+        if name in roles.rails:
+            continue
+        for ref in sorted({r for r, _p in pins if r in group_of}):
+            others = {group_index(r) for r, _p in pins if r != ref}
+            if None in others or not others or group_of[ref] in others:
+                continue
+            if all(g > group_of[ref] for g in others):
+                follow_sides[group_of[ref]][name, ref] = 1
+            elif all(g < group_of[ref] for g in others):
+                follow_sides[group_of[ref]][name, ref] = -1
+
     results: list[dict[str, Placement]] = []
     for index, (blocks, hangs) in enumerate(zip(row_blocks, hangs_by_row)):
         sub = replace(
@@ -292,7 +313,8 @@ def ladder_layout(
                 results.append(_place_group(symbols, nets, sub, blocks, hangs, text_widths=text_widths,
                                             gap_mm=gap_mm, slot_pitch_mm=slot_pitch_mm,
                                             stack_net=stack_rows[index][2] if index in stack_rows else None,
-                                            widen=widen, record=attempt_record, partial=partial))
+                                            widen=widen, record=attempt_record, partial=partial,
+                                            follow_side=follow_sides.get(index, {})))
                 if record is not None:
                     record.groups.append(attempt_record)
                 break
@@ -493,7 +515,7 @@ def ladder_layout(
 
 
 def _side_rows(by_ref, pins_by_net, roles, placed, geoms, row_pins, hang_nets, feedback_nets, attachments,
-               net_pin, gap, snap) -> tuple[dict[str, float], dict[str, str]]:
+               net_pin, gap, snap, follow_side=(), followers=None) -> tuple[dict[str, float], dict[str, str]]:
     """The y of each net that leaves a chain part by a pin off the chain row, up or down, as a row of its own.
 
     A link leaves a pin along the pin's direction, and people wire the far sides of a transformer or a bridge with a run
@@ -514,9 +536,41 @@ def _side_rows(by_ref, pins_by_net, roles, placed, geoms, row_pins, hang_nets, f
         return {(round(pg.normal[0]), round(pg.normal[1])) for pg in geoms[ref].pins.values()} >= {
             (1, 0), (-1, 0), (0, 1), (0, -1)}
 
+    def follower_sides(name, pins):
+        """``(part, +1 below / -1 above)`` for each chain part with pins on the net facing left and right, when the net has
+        pins on other parts that all lie on one side of the part."""
+        for ref in sorted({r for r, _p in pins}):
+            if ref not in row_pins or ref not in placed or len(geoms[ref].pins) < 3:
+                continue
+            facing = {round(geoms[ref].pins[p].normal[0]) for r, p in pins if r == ref and p in geoms[ref].pins}
+            others = [tip(r, p)[1] for r, p in pins if r != ref and r in placed and p in geoms[r].pins]
+            if not {-1, 1} <= facing:
+                continue
+            if (name, ref) in follow_side:
+                yield ref, follow_side[name, ref]
+                continue
+            if not others:
+                continue
+            here = placed[ref].position[1]
+            if all(y > here + _EPS for y in others):
+                yield ref, 1
+            elif all(y < here - _EPS for y in others):
+                yield ref, -1
+
     found = []
     for name, pins in sorted(pins_by_net.items()):
-        if name in roles.rails or name in hang_nets or name in feedback_nets:
+        if name in roles.rails or name in feedback_nets:
+            continue
+        # A net joining two pins of one chain part that face opposite sides (a follower's output and its inverting input) has
+        # its run just beyond that part's body, on the side nearer the net's other pins: people draw it round the body, one
+        # run, not two routes over the top.
+        looped = next(((ref, side) for ref, side in follower_sides(name, pins)), None)
+        if looped is not None:
+            # only the plan records it (the solver gives it its height); the heuristic's own placement is as it was
+            if followers is not None:
+                followers[name] = looped
+            continue
+        if name in hang_nets:
             continue
         chain_pins = [(ref, pin) for ref, pin in pins if ref in row_pins and ref in placed and pin in geoms[ref].pins]
         off = [(ref, pin) for ref, pin in chain_pins if pin not in row_pins[ref]]
@@ -1107,6 +1161,7 @@ def _place_group(
     widen: Mapping[str, float] | None = None,
     record: GroupRecord | None = None,
     partial: bool = False,
+    follow_side: Mapping[tuple[str, str], int] = {},
 ) -> dict[str, Placement]:
     """Place one chain row with everything that hangs from it.
 
@@ -1643,9 +1698,10 @@ def _place_group(
     if stack_net is not None:
         chain_nets.add(stack_net)
     chain_nets.discard(None)
+    followers: dict[str, tuple[str, int]] = {}
     side_rows, led_nets = _side_rows(
         by_ref, pins_by_net, roles, placed, geoms, row_pins, {net for _h, _p, net in hangs.values()},
-        feedback_nets, attachments, net_pin, gap_mm, snap,
+        feedback_nets, attachments, net_pin, gap_mm, snap, follow_side, followers,
     )
     chain_nets.difference_update(side_rows)
     # A net whose one chain pin is a control pin pointing outward along the chain row (a pair's outer base) is wired at
@@ -2449,7 +2505,8 @@ def _place_group(
         others = [placed[r2].position[1] + geoms[r2].pins[p2].point[1] for r2, p2 in serving if (r2, p2) != (r, p)]
         return all(o < y - _EPS for o in others) or all(o > y + _EPS for o in others)
 
-    rec.rows({name: rows[name] for name in side_rows}, {name: rows[name] for name in trunk_nets if not free_trunk(name)}, chain_nets)
+    rec.rows({**{name: rows[name] for name in side_rows}, **{name: rows.get(name, 0.0) for name in followers}}, {name: rows[name] for name in trunk_nets if not free_trunk(name)}, chain_nets)
+    rec.followers = dict(followers)
     unplaced = sorted(requested - placed.keys())
     if unplaced and not partial:
         raise ValueError(f"Could not place role symbols: {', '.join(unplaced)}")

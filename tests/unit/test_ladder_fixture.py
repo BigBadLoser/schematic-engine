@@ -49,6 +49,15 @@ class FixtureFileTests(unittest.TestCase):
                 plan = ladder_fixture.load_fixture(FIXTURES / f"{name}.json").plan
                 self.assertEqual(Plan.from_json(plan.to_json()), plan)
 
+    def test_a_net_joining_opposite_pins_of_a_part_is_a_side_row_just_below_that_parts_row(self):
+        # tally_timecode: VREF joins U5B's inverting input (left) and its output (right) and the pins of U5A, TP6 and C20 below
+        plan = ladder_fixture.load_fixture(FIXTURES / "tally_timecode.json").plan
+        names = [row.name for row in plan.rows]
+        side = next(row for row in plan.rows if row.name == "VREF")
+        self.assertEqual((side.kind, side.above), ("side", "U5:2#0"))
+        self.assertEqual(names[names.index("VREF") - 1], "U5:2#0")
+        self.assertEqual(next(row for row in plan.rows if row.name == "trrs_in#0").above, "VREF")
+
     def test_every_planned_part_has_a_place_in_the_baseline(self):
         # A part the heuristic finds no slot for is left out of the plan (it is in no structure), so a baseline never lacks a
         # part the plan has. (tally_timecode's R21 once had no slot; with its test points as taps it has.)
