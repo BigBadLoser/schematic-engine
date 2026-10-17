@@ -563,6 +563,18 @@ placement format is in its docstring). `sandbox.py ladder-fixtures` rewrites the
 In the harness, `KICAD_AI_LADDER_PLACEMENT=<file or folder>` takes positions from placement files instead of
 `ladder_layout`, `KICAD_AI_LADDER_SOLVER=cpsat` from `ladder_solve.legalise_with_status` when that module exists.
 
+### Experiment log (4b)
+
+- **2026-10-17, bypass rule: tried two ways, dropped.** A two-pin part across exactly the two rails a unit's power pins use
+  (tally_timecode C19 beside U5C) stands beside that unit. Solver, five seeds (7, 11, 13, 17, 19; same at budget 40), through /
+  clearance / short / crossings / wire against the pre-bypass **0/3/0/3/324.1**:
+  - as a member of the host's chain row: 0/2/0/2/454.7 (+130 mm; the row widens, J7 drifts left; heuristic shorts 7 to 9);
+  - as a Hang from the host's power pin on the rail, with a solver hook tying a rail hang beside its host pin (side, rail pin level
+    with the host's, within 15.24 mm): 0/1/0/4/427.5 (+103 mm, one more crossing).
+  The picture of the second reads well, but the cause is real: holding C19's rail pin level with U5C pin 8 pulls the amplifier stage
+  down, +44 mm on OPAMP_A_N, +37 mm on LTC_IN, +24 mm on MIC_PASSTHROUGH. A future try needs the bypass to sit off the stage's
+  rows, not beside a row-end unit. The second variant is kept on branch `experiment/bypass-rail-hang` (not merged).
+
 ## 4c. Multi-unit parts: each unit is a placeable (2026-10-14; built)
 
 **What is multi-unit in the corpus.** A KiCad part drawn in several units is several `(symbol ... (unit N))` instances of one
