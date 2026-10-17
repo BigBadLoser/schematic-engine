@@ -298,6 +298,7 @@ class LayoutRecord:
     # lack it) instead of raising: the decisions after the failure are still worth having as a plan.
     partial: bool = False
     pair_stacks: list[StackRecord] = field(default_factory=list)                  # stacked pairs, left to right
+    bypass: dict[str, tuple[str, Orientation, int, str, str]] = field(default_factory=dict)   # a bypass part -> (host, orientation, side, rail net, host pin)
     beside: dict[str, tuple[str, Orientation, int]] = field(default_factory=dict)      # a power unit -> (the placed unit it stands beside, orientation, +1 right of it or -1 left)
 
 
@@ -427,6 +428,9 @@ def plan_from_record(record: LayoutRecord, symbols: Sequence["PlacedSymbol"], ne
         else:
             pins.pop(ref, None)
             columns.append(Column("", (ref,), (orientation,)))
+    for rank, (ref, (host, orientation, side, rail, pin)) in enumerate(sorted(record.bypass.items())):
+        orientations[ref] = orientation
+        hangs.append(Hang(ref, rail, f"{host}.{pin}", "right" if side > 0 else "left", orientation, rank))
     sequence = [tuple(group) for group in sequence_groups]
     return Plan(
         rows=tuple(named),

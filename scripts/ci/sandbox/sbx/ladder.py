@@ -274,7 +274,7 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
             clocks += f"; deterministic {deterministic}"
         # an ``other`` part the plan lists in a row stands beside the part it serves: the caller leaves it there
         try:
-            result.placements.beside = frozenset(ref for row in plan.rows if row.kind == "chain" for ref in row.order) & set(roles.other)
+            result.placements.beside = frozenset({ref for row in plan.rows if row.kind == "chain" for ref in row.order} | {h.reference for h in plan.hangs}) & set(roles.other)
         except AttributeError:
             pass
         return (result.placements, f"solver cpsat: {result.status}" + (f" ({clocks})" if clocks else ""),

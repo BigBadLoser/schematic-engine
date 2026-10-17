@@ -485,10 +485,17 @@ def ladder_layout(
     bypassed: dict[str, int] = defaultdict(int)
     for ref in bypass_refs:
         hosts = [host for host in sorted(placed) if host != ref and rails_of(host) == rails_of(ref)
+                 and host not in roles.attachments and host not in roles.rungs and host not in roles.feedback   # a hang does not hang from a hang
                  and (pin_count(host) >= 3 or split_unit(host)[1] is not None)]
         for host in sorted(hosts, key=lambda h: (bypassed[h], h)):
             if stand_beside(ref, host):
                 bypassed[host] += 1
+                if record is not None:
+                    # a bypass part hangs from the host's pin on a rail (the supply first), beside it: not a member of a row
+                    side_of = record.beside.pop(ref)
+                    pin_on = sorted(((roles.rails[name] != "supply", name, pin) for name, pins in pins_by_net.items()
+                                     if name in roles.rails for r, pin in pins if r == host), key=lambda t: t[:2])
+                    record.bypass[ref] = (host, side_of[1], side_of[2], pin_on[0][1], pin_on[0][2])
                 break
         else:
             lone_refs.append(ref)

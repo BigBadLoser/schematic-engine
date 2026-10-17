@@ -680,8 +680,11 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
     # The hang itself still lands exactly on the trunk, without any stand-off.
     free_trunks = set()
     hung_free = {}
+
+    def is_rail(name):
+        return name in net_map and net_map[name][0].style == "power"
     for hang in sorted(plan.hangs, key=lambda h: (h.wire, h.host, h.reference)):
-        if hang.wire not in row_y and hang.wire not in stacks:
+        if hang.wire not in row_y and hang.wire not in stacks and not is_rail(hang.wire):
             ep = hang_endpoint(hang)
             normal = geoms[ep[0]].pins[ep[1]].normal
             toward = ((hang.side == "below" and normal[1] > .5) or
@@ -759,6 +762,19 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
             raise LadderInfeasible(["hang row", "hang side"], [ref, ep[0]],
                                    f"{hang.side} hang's signal pin does not point toward its wire")
         px, py = pin(candidates[0])
+        if is_rail(hang.wire):
+            # A rail has no wire to land on: the part stands beside its host pin, on the declared side, its own
+            # rail pin level with the host's (both stubs reach the rail at one height), within a few pitches.
+            if hang.side not in ("left", "right"):
+                raise LadderInfeasible(["hang side"], [ref, ep[0]], "a rail hang is left or right of its host pin")
+            require(py == host_y, "hang row", [ref, ep[0]])
+            l, t, r, b = rect(ref)
+            require(r <= host_x if hang.side == "left" else l >= host_x, "hang side", [ref, ep[0]])
+            distance = absolute(px - host_x, f"hang distance:{ref}")
+            require(distance <= _mm(15.24), "hang gap", [ref, ep[0]])
+            alignment.append(distance)
+            hang_distances[hang.wire, hang.side, hang.host].append((hang.rank, ref, distance))
+            continue
         if hang.wire in stacks:
             # Sideways from the junction wire: the tip lands on it, anywhere between the two parts' tips, and the
             # body lies on the declared side; the rank orders the hangs of one side by distance down the wire.
