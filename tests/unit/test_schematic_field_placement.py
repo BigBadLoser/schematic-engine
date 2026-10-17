@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unittest import mock
+
+from backend.schematic import field_placement
 from backend.schematic.field_placement import file_angle, plan_fields, routing_text_obstacles
 from backend.schematic.kicad_geometry import measured_scene_from_kicad, text_box, text_width_mm
 from backend.schematic.presentation_geometry import Bounds, GeometryItem, GeometryKind as K, GeometryScene
@@ -56,7 +59,7 @@ class FieldPlacementTests(unittest.TestCase):
         ))
         first, second = plan_fields(scene), plan_fields(scene)
         self.assertEqual(first.moves, second.moves)
-        self.assertIn(first.solver, {"cp-sat", "cp-sat (deterministic limit)", "cp-sat (wall-clock limit)", "greedy", "none"})
+        self.assertIn(first.solver, {"cp-sat", "cp-sat, continued", "cp-sat (deterministic limit)", "cp-sat, continued (deterministic limit)", "cp-sat (wall-clock limit)", "greedy", "none"})
 
     def test_text_on_the_wire_of_a_vertical_part_moves_beside_it(self):
         scene = GeometryScene.from_items(tuple(vertical_part() + self.default_fields()))
@@ -317,3 +320,62 @@ class SheetOrderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContinuationTests(unittest.TestCase):
+    """One continuation at a larger budget, only for an unproven solve that still has collisions."""
+
+    def priced(self):
+        a, b = Bounds(0, 0, 2, 1), Bounds(1, 0, 3, 1)       # overlapping texts
+        far = Bounds(10, 0, 12, 1)
+        # field 0 has a clear and a clashing candidate; field 1 has one candidate overlapping the first
+        return [
+            [("E", a, 0.0, {}), ("W", far, 0.0, {})],
+            [("E", b, 0.0, {})],
+        ]
+
+    def run_rule(self, results):
+        calls = []
+
+        def fake(fields, priced, pairs=None, budget=25.0, seconds=60.0, hint=None):
+            calls.append((budget, hint))
+            return results[len(calls) - 1]
+        with mock.patch.object(field_placement, "_solve", fake):
+            out = field_placement._solve_with_continuation([object(), object()], self.priced(), None)
+        return out, calls
+
+    def test_proven_solve_takes_the_normal_path(self):
+        out, calls = self.run_rule([([0, 0], "cp-sat")])
+        self.assertEqual(out, ([0, 0], "cp-sat"))
+        self.assertEqual(len(calls), 1)
+
+    def test_unproven_without_collisions_does_not_continue(self):
+        out, calls = self.run_rule([([1, 0], "cp-sat (deterministic limit)")])
+        self.assertEqual(out[0], [1, 0])
+        self.assertEqual(len(calls), 1)
+
+    def test_unproven_with_collisions_continues_once_hinted_and_keeps_the_better(self):
+        out, calls = self.run_rule([([0, 0], "cp-sat (deterministic limit)"), ([1, 0], "cp-sat")])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1], (field_placement._CONTINUE_DETERMINISTIC_TIME, [0, 0]))
+        self.assertEqual(out[0], [1, 0])
+
+    def test_a_tie_keeps_the_continuation(self):
+        out, _ = self.run_rule([([0, 0], "cp-sat (deterministic limit)"), ([0, 0], "cp-sat (deterministic limit)")])
+        self.assertEqual(out[0], [0, 0])   # a tie keeps the continuation
+        self.assertIn("continued", out[1])
+
+    def test_worse_continuation_keeps_the_first(self):
+        priced = [
+            [("E", Bounds(0, 0, 2, 1), 0.0, {"text": 1}), ("W", Bounds(10, 0, 12, 1), 0.0, {"text": 3})],
+        ]
+        results = [([0], "cp-sat (deterministic limit)"), ([1], "cp-sat")]
+        calls = []
+
+        def fake(fields, priced, pairs=None, budget=25.0, seconds=60.0, hint=None):
+            calls.append(budget)
+            return results[len(calls) - 1]
+        with mock.patch.object(field_placement, "_solve", fake):
+            out = field_placement._solve_with_continuation([object()], priced, None)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(out, ([0], "cp-sat (deterministic limit)"))
