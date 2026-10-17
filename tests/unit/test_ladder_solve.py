@@ -330,9 +330,12 @@ class LadderSolveTests(unittest.TestCase):
                                            Connection("chain", (("S", "1"), ("A", "1")))])
         signal = tip(symbols, result, "H", "1")
         feeder = tip(symbols, result, "S", "2")
-        self.assertEqual(signal[0], feeder[0])
-        self.assertGreater(signal[1], feeder[1])
-        self.assertGreater(signal[1], tip(symbols, result, "A", "3")[1])
+        host = tip(symbols, result, "A", "3")
+        # The trunk is the feeder's: the hang's tip is straight below the feeder's tip (a drop), or, at the same cost, on
+        # the host pin's own row between the feeder and the host (no drop). Never off the feeder's column and off the row.
+        below = signal[0] == feeder[0] and signal[1] > feeder[1] and signal[1] > host[1]
+        level = signal[1] == host[1] == feeder[1] and feeder[0] < signal[0] < host[0]
+        self.assertTrue(below or level, (signal, feeder, host))
 
     def test_feedback_accepts_non_grid_gap(self):
         symbols = [symbol("A"), symbol("B"), symbol("F")]
@@ -387,6 +390,26 @@ class LadderSolveTests(unittest.TestCase):
         result = legalise(p, symbols, nets)
         self.assertEqual(tip(symbols, result, "H1", "1")[1], tip(symbols, result, "A", "2")[1])
         self.assertGreater(result["H1"].position[1], result["A"].position[1])
+
+    def test_hung_body_off_the_host_row_stays_out_of_the_hosts_pin_corridor(self):
+        # A one-pin part (a test point: the pin points down, the body above it) hangs "above" a wire that a host pin
+        # points sideways into.  The wire is free, so its height is the solver's: wherever the tip is, the part's body is
+        # not across the row the host pin's wire leaves along (a grid each side), unless the tip is on that row.
+        host = symbol("A", extra={"3": PinGeometry((-3.81, 7.62), (-1, 0))})
+        host.geometry[O] = OrientedGeometry(host.geometry[O].pins, (-3.81, -1.27, 3.81, 8.89))
+        tap = PlacedSymbol("T", (100, 100), O, {O: OrientedGeometry(
+            {"1": PinGeometry((0, 0), (0, 1))}, (-1.27, -5.08, 1.27, 0.0))})
+        symbols = [symbol("S", True), host, tap]
+        p = plan(symbols, [row("main", ["S", "A"])],
+                 hangs=[Data(reference="T", wire="support", host="A.3", side="above", orientation=O, rank=0)],
+                 pins={"S": "1", "A": "1"})
+        result = legalise(p, symbols, [Connection("support", (("S", "2"), ("A", "3"), ("T", "1"))),
+                                       Connection("chain", (("S", "1"), ("A", "1")))])
+        row_y = tip(symbols, result, "A", "3")[1]
+        tip_y = tip(symbols, result, "T", "1")[1]
+        top, bottom = result["T"].position[1] - 5.08, result["T"].position[1] - 1.27      # the body, less the pin's lead
+        if abs(tip_y - row_y) > 1e-6:
+            self.assertTrue(bottom <= row_y - 1.27 + 1e-6 or top >= row_y + 1.27 - 1e-6, (top, bottom, row_y))
 
     def test_lane_part_recorded_as_a_span_is_placed_as_the_span(self):
         for direction in (-1, 1):
