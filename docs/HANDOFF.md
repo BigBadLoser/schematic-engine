@@ -1,7 +1,7 @@
 # Handoff: where the schematic engine stands
 
 Read this first, then `docs/specs/ladder-placer.md` (the specification: rules, the plan/legaliser seam in 4b, multi-unit
-parts in 4c, and a record of every solver experiment with its numbers). Last updated 2026-10-14.
+parts in 4c, and a record of every solver experiment with its numbers). Last updated 2026-10-17.
 
 ## What the engine is for
 
@@ -60,6 +60,10 @@ CI (`.github/workflows/`) runs the unit suite and builds the four demos from com
 
 ## Results now
 
+Done since the last handoff (2026-10-17): field text continues to a larger budget only when a solve ends unproven
+with collisions left (tally_timecode 3 to 0 and tally_power 6 to 0 colliding labels; the demos never trigger it); a net
+joining opposite pins of one part is a side row beside it (the op-amp follower loop).
+
 Solver placements scored by the checker on the solver's own wires, five seeds (7, 11, 13, 17, 19), deterministic budget
 20 per seed, on the committed fixtures. Columns: wires through a body / clearance faults / shorts / crossings / wire mm.
 
@@ -76,7 +80,7 @@ Solver placements scored by the checker on the solver's own wires, five seeds (7
 | tally_power | 0 / 1 / 0 / 0 / 82.6 | |
 | bms_supply | 0 / 4 / 0 / 0 / 141.0 | after taps |
 | pico_hbridge | 0 / 3 / 0 / 2 / 271.8 | one A-B crossing is forced by the plan |
-| tally_timecode | 0 / 3 / 0 / 3 / 324.1 | multi-unit LM358, taps, jacks; was 6 / 20 / 3 / 9 / 677 |
+| tally_timecode | 0 / 1 / 0 / 2 / 327.8 | multi-unit LM358, taps, jacks, follower side row; was 6 / 20 / 3 / 9 / 677 |
 | uno_r4_power | 0 / 0 / 0 / 2 / 539.0 | |
 | bitaxe_power | 0 / 22 / 0 / 40 / 2711.7 | places, but its plan is poor |
 
@@ -85,27 +89,30 @@ Real-sheet builds of the four demos (netlist PASS, 0 crossings): buck 68.6 mm, L
 run `20261014T161401Z-seeds-1`, picture `tally_final.png` in its artifact folder. A real-sheet build takes 20 to 90 s
 plus the solve (1 to 4 minutes at five seeds); the old trial loop took 6 to 30 minutes per sheet.
 
-## Open items, in priority order
-
-1. **Field-text overlaps** (labels on values, e.g. R19, R20, U5C on tally_timecode; five on the amplifier). Cause
-   measured: the field solve (`field_placement.py`, deterministic budget 25) stops unproven. Proposed, untested rule:
-   run the normal budget, and only when it ends unproven with collisions left, continue once at about 100 and keep the
-   result with fewer collisions. Test it by rebuilding sheets in the sandbox, not by re-solving placed ones. LM317 keeps
-   one collision even at a proven optimum: not investigated.
-2. **tally_timecode leftovers:** the bypass capacitor C19 stands alone at the bottom; a rail-to-rail bypass should
-   stand beside the power pins it decouples (here U5C). VREF loops round U5B.
-3. **Seeds as the default for real builds.** The library default is one seed; the sandbox uses five via
+## Open items, 1. **Two corpus sheets stopped building** (found 2026-10-17): bms_supply fails in routing (a wire through test point
+   TP5) and tally_power at the connectivity gate (the battery switch SW6's unused pin 3). Both built on 2026-10-13
+   (run `corpus-direct-3`). Suspects are the taps, multi-unit, power-unit and connector-facing merges; bisect, then fix
+   with a general rule. Lesson: the gate checks the demos on real sheets but the corpus only at plan level; a from-scratch
+   corpus build on every merge would have caught this the day it landed.
+2. **tally_timecode's bypass capacitor C19** still stands alone at the bottom. Two rules were tried and dropped (spec
+   4b experiment log; branch `experiment/bypass-rail-hang`): holding it beside the power unit pulls the amplifier stage
+   down and costs over 100 mm. A future try must place it clear of the stage's rows.
+3. **LM317's last label "collision"** is a margin disagreement, not an overlap: net labels are written after the field
+   stage and one lands 0.8 mm from a value, inside the field placer's 1.0 mm margin. Fix by making the label step keep
+   the same margin from field text (preferred), or by placing labels before fields. Owner to choose.
+F loops round U5B.
+4. **Seeds as the default for real builds.** The library default is one seed; the sandbox uses five via
    `KICAD_AI_LADDER_SEEDS`. One seed can land in a spread layout (tally_timecode: 505 mm, once 2000 mm); five converge.
-4. **bitaxe_power's plan** (grammar): its second group stands far from the controller, and the plan forces many
+5. **bitaxe_power's plan** (grammar): its second group stands far from the controller, and the plan forces many
    crossings. See the diagnosis in the spec (section 4b log) before changing rules.
-5. **Package it for the companion:** rename `backend.schematic` and `backend.kicad` to a proper package name, add a
+6. **Package it for the companion:** rename `backend.schematic` and `backend.kicad` to a proper package name, add a
    `pyproject.toml`, and expose a small surface (intent in, sheet out). Do it when no agent has a branch open, as one
    mechanical commit.
-6. **Refresh the demo fixtures' baselines.** The committed demo fixtures predate refinement-scoring changes; regenerate
+7. **Refresh the demo fixtures' baselines.** The committed demo fixtures predate refinement-scoring changes; regenerate
    them with `sandbox.py ladder-fixtures` and record old and new baseline numbers in the commit. Sheets do not change.
-7. **Deterministic sheet writing.** KiCad's written symbol and pin order varies between identical runs; make the writer
+8. **Deterministic sheet writing.** KiCad's written symbol and pin order varies between identical runs; make the writer
    emit a stable order so sheets can be compared as text.
-8. **Later:** labels beyond power nets and the microcontroller fan-out work; corpus circuits beyond the ten fixtures.
+9. **Later:** labels beyond power nets and the microcontroller fan-out work; corpus circuits beyond the ten fixtures.
 
 The companion repository's PR #8 (BigBadLoser/kicad-ai-engineering-companion) is the old home of this engine and is
 still open; the owner decides whether to close it.
