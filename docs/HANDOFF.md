@@ -89,7 +89,9 @@ Real-sheet builds of the four demos (netlist PASS, 0 crossings): buck 68.6 mm, L
 run `20261014T161401Z-seeds-1`, picture `tally_final.png` in its artifact folder. A real-sheet build takes 20 to 90 s
 plus the solve (1 to 4 minutes at five seeds); the old trial loop took 6 to 30 minutes per sheet.
 
-## Open items, 1. **Two corpus sheets stopped building** (found 2026-10-17): bms_supply fails in routing (a wire through test point
+## Open items, in priority order
+
+1. **Two corpus sheets stopped building** (found 2026-10-17): bms_supply fails in routing (a wire through test point
    TP5) and tally_power at the connectivity gate (the battery switch SW6's unused pin 3). Both built on 2026-10-13
    (run `corpus-direct-3`). Suspects are the taps, multi-unit, power-unit and connector-facing merges; bisect, then fix
    with a general rule. Lesson: the gate checks the demos on real sheets but the corpus only at plan level; a from-scratch
