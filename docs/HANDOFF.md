@@ -56,6 +56,13 @@ Solver switches for the sandbox: `KICAD_AI_LADDER_SOLVER=cpsat` (solver instead 
 `KICAD_AI_LADDER_SEEDS=7,11,13,17,19` (the seed portfolio). Demo picks used for every comparison:
 `demo_buck=7, demo_lm317=5, demo_opamp=11, demo_ampac=5`. Corpus circuits run as `corpus_<name>` fixtures.
 
+`python scripts/ci/check_all.py` builds all 14 sheets from scratch (solver, five seeds; `--seeds 1` for a pass/fail check),
+prints one row per sheet and exits non-zero when a sheet stopped building or got worse in throughs, shorts or crossings
+against `tests/fixtures/check_all/expected.json` (`--update` rewrites it; known failures are recorded there). The solver's
+answers are cached under `scripts/ci/sandbox/.work/cache/placements/`, keyed by the plan, symbols, nets, seeds, budget and
+the source of `ladder_solve.py`, `ladder_plan.py` and `placement_refinement.py`; `KICAD_AI_LADDER_CACHE=0` turns it off.
+A cold run took about 58 minutes, a warm one (all cached) about 8.
+
 CI (`.github/workflows/`) runs the unit suite and builds the four demos from committed placements.
 
 ## Results now

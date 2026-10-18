@@ -1,0 +1,106 @@
+{
+ "corpus_bitaxe_power": {
+  "built": false,
+  "known_failure": "TOOL_EXECUTION_FAILED: No unobstructed power terminal exit from Q2.1 at (162.56, 148.59) for net GND; reposition its source or nearby geometry (No unobstructed "
+ },
+ "corpus_bms_supply": {
+  "built": false,
+  "known_failure": "TOOL_EXECUTION_FAILED: libavoid route intersects symbol body: EN:TP5.1->U3.2 crosses TP5 on (48.26, 29.21)->(55.88, 29.21) (after 1 reroute, 0 diagonal repairs)"
+ },
+ "corpus_gamma_preamp": {
+  "built": false,
+  "known_failure": "TOOL_EXECUTION_FAILED: Net-aware route intersects pre-existing conductor of unknown net ownership: N_R4_2:net_branch_2 (30.48, 101.60000000000001)->(76.2, 101.6"
+ },
+ "corpus_gamma_sipm": {
+  "built": true,
+  "corners": 10,
+  "crossings": 2,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 314.96
+ },
+ "corpus_piaa_power": {
+  "built": true,
+  "corners": 8,
+  "crossings": 1,
+  "field_collisions": 1,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 1,
+  "wire_mm": 171.45
+ },
+ "corpus_pico_hbridge": {
+  "built": false,
+  "known_failure": "TOOL_EXECUTION_FAILED: Net-aware route intersects pre-existing conductor of unknown net ownership: A:net_branch_1 (8.89, 12.7)->(63.5, 12.7) (after 1 reroute, 0"
+ },
+ "corpus_pmod_hv": {
+  "built": true,
+  "corners": 10,
+  "crossings": 2,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 226.06
+ },
+ "corpus_tally_power": {
+  "built": false,
+  "known_failure": "Schematic connectivity gate failed: Connectivity smells suggest the schematic is not ready for PCB or release work. | \"Isolated footprint symbols: 0\", ; \"Hierar"
+ },
+ "corpus_tally_timecode": {
+  "built": true,
+  "corners": 14,
+  "crossings": 3,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 349.25
+ },
+ "corpus_uno_r4_power": {
+  "built": false,
+  "known_failure": "TOOL_VALIDATION_ERROR: 1 validation error for MoveSymbolInput"
+ },
+ "demo_ampac": {
+  "built": true,
+  "corners": 7,
+  "crossings": 1,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 302.26
+ },
+ "demo_buck": {
+  "built": true,
+  "corners": 1,
+  "crossings": 0,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 68.58
+ },
+ "demo_lm317": {
+  "built": true,
+  "corners": 9,
+  "crossings": 0,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 208.28
+ },
+ "demo_opamp": {
+  "built": true,
+  "corners": 6,
+  "crossings": 0,
+  "field_collisions": 0,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 234.95
+ }
+}

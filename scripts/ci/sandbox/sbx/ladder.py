@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
-from . import env, placement_replay, redraw
+from . import env, placement_cache, placement_replay, redraw
 
 if str(env.REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(env.REPO_ROOT))
@@ -264,7 +264,23 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
         # the heuristic placer's layout of the same plan can be the solver's starting hint (never a constraint)
         hint = heuristic if os.environ.get(HINT_ENV, "") == "heuristic" and heuristic else None
         seeds = tuple(int(v) for v in os.environ.get(SEEDS_ENV, "").replace(",", " ").split()) or None
-        result = ladder_solve.legalise_with_status(plan, widened, nets, hint=hint, seeds=seeds)
+        # an answer the solver already gave to these very inputs (and this very code) is read back, not solved again
+        cache_name = None
+        if placement_cache.enabled():
+            try:
+                cache_name = placement_cache.key(plan, widened, nets, gap_mm=2.54, pitch_mm=7.62, hint=hint, seeds=seeds,
+                                                 budget=getattr(ladder_solve, "_SOLVER_DETERMINISTIC_TIME", 0.0))
+            except Exception:           # stand-in inputs (a test's) have no key: they are solved
+                cache_name = None
+        cached = placement_cache.load(cache_name) if cache_name else None
+        if cached is None and os.environ.get(placement_cache.CACHE_ONLY_ENV) == "1":
+            raise RuntimeError(placement_cache.MISS)       # a probe: is this sheet's answer stored? (scripts/ci/check_all.py)
+        if cached is not None:
+            result = SimpleNamespace(placements=cached, status=cached.status)
+        else:
+            result = ladder_solve.legalise_with_status(plan, widened, nets, hint=hint, seeds=seeds)
+            if cache_name:
+                placement_cache.store(cache_name, result.placements, result.status)
         # The solver's own clocks (model build, feasibility, optimisation; its deterministic time), so the note tells
         # the solve's cost even when the harness runs several placements at once in one process.
         timing = getattr(result.placements, "timing", None) or {}
@@ -272,7 +288,8 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
         deterministic = getattr(result.placements, "deterministic_time", None)
         if deterministic is not None:
             clocks += f"; deterministic {deterministic}"
-        return (result.placements, f"solver cpsat: {result.status}" + (f" ({clocks})" if clocks else ""),
+        return (result.placements, f"solver cpsat: {result.status}" + (f" ({clocks})" if clocks else "")
+                + (" [cached]" if cached is not None else ""),
                 getattr(result.placements, "wires", None) or None)
     layout = _ladder_functions()[1]
     try:
