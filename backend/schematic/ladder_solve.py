@@ -795,6 +795,15 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
             if len(horizontal) == 1:
                 alignment.append(absolute(wy - pin(horizontal[0])[1], f"row tie:{ref}"))
         require(py == wy, "hang row", [ref, ep[0]])
+        if len(geoms[ref].pins) == 1 and hang.side in ("below", "above") and abs(normal[0]) > .5 and abs(normal[1]) < .5:
+            # A tap (a one-pin part) on a sideways host pin: the net is that one wire, which the router draws from the pin
+            # along its row. A tap whose tip is off that row stands clear of it (a grid each side), not across the corridor.
+            reach = 10 * _GRID
+            left, right = (host_x, host_x + reach) if normal[0] > 0 else (host_x - reach, host_x)
+            level = model.NewBoolVar(f"hang level:{ref}")           # the tip on the host's row: the wire is that row's own
+            model.Add(py == host_y).OnlyEnforceIf(level)
+            model.Add(py != host_y).OnlyEnforceIf(level.Not())
+            disjoint(rect(ref), (left, host_y - _GRID, right, host_y + _GRID), "hang corridor", [ref, ep[0]], waived=level)
         hang_links.append((ref, _mm(geoms[ref].pins[candidates[0][1]].point[1]), wy))
         l, t, r, b = rect(ref)
         if hang.side in ("below", "above"):

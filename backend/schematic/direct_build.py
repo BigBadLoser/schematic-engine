@@ -13,6 +13,7 @@ and captions are written by ``_place_fields`` itself, so their time is in ``fiel
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -221,7 +222,14 @@ def build_direct(
         with timing.stage("fields"):      # includes the net names and block captions (`_write_names_and_captions`)
             fields_placed = workflow._place_fields(root, schematic_file, intent)
         with timing.stage("checks"):
-            checks = _checks(workflow, root, schematic_file, intent, fields_placed)
+            try:
+                checks = _checks(workflow, root, schematic_file, intent, fields_placed)
+            except Exception:
+                try:     # a gate that fails leaves its sheet in the artifact folder, as a failed write does
+                    shutil.copy2(schematic_file, workflow._artifact_root / workflow.FAILED_SHEET)
+                except OSError:
+                    pass
+                raise
         return {
             "created": created, "placed": placed, "no_connects": no_connects, "routes": routes,
             "junctions": junctions, "checks": checks, "fields_placed": fields_placed,
