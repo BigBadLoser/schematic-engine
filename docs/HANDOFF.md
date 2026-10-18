@@ -98,6 +98,28 @@ plus the solve (1 to 4 minutes at five seeds); the old trial loop took 6 to 30 m
 
 ## Open items, in priority order
 
+**Next session starts here (2026-10-18).** Building every sheet from scratch (`scripts/ci/check_all.py`) showed that
+plan-level counts had hidden real build failures. On main `fd202a5` these corpus sheets still do not build; the first
+two have fixes waiting, the next two a confirmed plan:
+
+- **bitaxe_power and uno_r4_power:** fixes committed but NOT yet built or verified, on branch `fix-uno-bitaxe`
+  (pushed): `88ced26` gives pins of one net that share a tip (a power transistor's paralleled source pins) one power
+  stub, and stops treating them as each other's obstacles; `318e59b` re-solves once from the heuristic layout when a
+  solve comes out spread (price above 1.5 times the heuristic's, extent above three times the bodies' widths, or a
+  coordinate past the move tool's 2000 mm limit) and keeps the cheaper. Verify with
+  `check_all.py --only corpus_uno_r4_power,corpus_bitaxe_power`, then a full `check_all.py`, then merge. Underlying
+  cause left open: parts joined only by power nets carry no wire cost, so nothing pulls them together.
+- **gamma_preamp and pico_hbridge:** the router fails with "net-aware route intersects a pre-existing conductor of
+  unknown net ownership". Cause: a power-rail stub is already drawn where a signal branch must pass, and the router
+  forbids crossing any wire, even at right angles, so it finds no route. Agreed fix, not started, in the net-aware
+  routing functions of `backend/kicad/mcp_extended_server.py` only: a net's own earlier branches count as its own;
+  when no route avoids every foreign wire, accept perpendicular crossings away from wire ends and bends, with no
+  junction and touching no body, fewest crossings then shortest; never a collinear overlap or an end touch. The deeper
+  fix is for the router to follow the solver's planned wires instead of its own spanning tree.
+
+Working practice learnt the hard way: give every agent a stop condition and a time box (at most three fix attempts),
+never run two agents' build loops at once on this six-core machine, and check for stray processes when runs feel slow.
+
 1. **tally_timecode pays for the tap corridor.** The fix that made bms_supply build again (a test point keeps its body
    out of its host pin's exit corridor) moved tally_timecode at five seeds from 0 / 1 / 0 / 2 / 327.8 to about
    0 / 2 / 0 / 3 / 375.9. Find a corridor form that keeps bms_supply building without that cost. Context: bms_supply was

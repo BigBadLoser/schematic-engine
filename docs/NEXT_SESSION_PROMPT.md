@@ -11,5 +11,7 @@ Work as an orchestrator: give implementation items to agents working in git work
 tables and pictures, merge to main yourself and push (you have standing permission for this repository). Resume an
 existing agent with a new item rather than starting a fresh one where you can.
 
-Begin with open item 1 in the handoff (field-text overlaps: the proposed continuation rule for the field solve, tested
-by rebuilding sheets in the sandbox). Show me the before/after overlap counts and pictures before merging.
+Begin with the "Next session starts here" block at the top of the handoff's open items: verify and merge branch
+fix-uno-bitaxe (bitaxe_power and uno_r4_power), then the agreed router fix for gamma_preamp and pico_hbridge. Use
+`python scripts/ci/check_all.py` (about an hour cold, minutes when cached) as the gate for every merge, and run one
+agent's builds at a time. Show me the before/after table and pictures before merging.
