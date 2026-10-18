@@ -91,11 +91,12 @@ plus the solve (1 to 4 minutes at five seeds); the old trial loop took 6 to 30 m
 
 ## Open items, in priority order
 
-1. **Two corpus sheets stopped building** (found 2026-10-17): bms_supply fails in routing (a wire through test point
-   TP5) and tally_power at the connectivity gate (the battery switch SW6's unused pin 3). Both built on 2026-10-13
-   (run `corpus-direct-3`). Suspects are the taps, multi-unit, power-unit and connector-facing merges; bisect, then fix
-   with a general rule. Lesson: the gate checks the demos on real sheets but the corpus only at plan level; a from-scratch
-   corpus build on every merge would have caught this the day it landed.
+1. **tally_timecode pays for the tap corridor.** The fix that made bms_supply build again (a test point keeps its body
+   out of its host pin's exit corridor) moved tally_timecode at five seeds from 0 / 1 / 0 / 2 / 327.8 to about
+   0 / 2 / 0 / 3 / 375.9. Find a corridor form that keeps bms_supply building without that cost. Context: bms_supply was
+   broken by the taps merge 67540f4 (TP5's body across U3.2's row); tally_power never built with the solver's placement
+   until the no-connect marker learnt about mirrored symbols (332191f). bms_supply still has 3 colliding labels: its
+   field solve stays unproven even at budget 100.
 2. **tally_timecode's bypass capacitor C19** still stands alone at the bottom. Two rules were tried and dropped (spec
    4b experiment log; branch `experiment/bypass-rail-hang`): holding it beside the power unit pulls the amplifier stage
    down and costs over 100 mm. A future try must place it clear of the stage's rows.
