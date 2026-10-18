@@ -970,6 +970,7 @@ def build_extended_server(profile: str = "schematic_authoring"):
         sheet = terminal_sheet(clearance_mm, ignore)
         tight_layout = sheet.tight
         diagnostics: list[dict[str, Any]] = []
+        served_tips: dict[tuple[str, float, float], str] = {}
 
         def snap(value: float) -> float:
             return round(value / SCHEMATIC_GRID_MM) * SCHEMATIC_GRID_MM
@@ -1021,6 +1022,16 @@ def build_extended_server(profile: str = "schematic_authoring"):
                 continue
 
             px, py, nx, ny = resolve_terminal_pin(sheet.data, reference, pin)
+            tip_key = (net, round(px, 3), round(py, 3))
+            if tip_key in served_tips:
+                # Pins of one part that share a tip (a power transistor's source pins) are on the terminal the first of
+                # them got: a second stub from the same point would lie over the first.
+                diagnostics.append({
+                    "reference": reference, "pin": pin, "net": net, "pin_position": [round(px, 4), round(py, 4)],
+                    "strategy": "shares_tip_with_" + served_tips[tip_key], "fallback": False,
+                })
+                continue
+            served_tips[tip_key] = f"{reference}.{pin}"
 
             # The symbol at the end of the stub reaches away from its own pin,
             # so a ground symbol hangs down and a supply symbol stands up. The

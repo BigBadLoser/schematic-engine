@@ -258,6 +258,12 @@ def choose_safe_terminal(
     symbol, and a stub may not run through an ``avoid_boxes`` box (another terminal's symbol). A stub may run
     through a ``soft_boxes`` box (text) but pays for it, so a way round wins unless it is much longer.
     """
+    # Pins of one symbol can share a tip (a power transistor's three source pins): a pin at the source is the source, not
+    # an obstacle in the way of every stub that leaves it.
+    foreign_pin_points = tuple(
+        point for point in foreign_pin_points
+        if abs(point[0] - source[0]) + abs(point[1] - source[1]) > 1e-6
+    )
     if grid_mm <= 0 or clearance_mm < 0 or not all(
         isfinite(x) for x in (*source, *preferred_normal)
     ):
