@@ -737,5 +737,66 @@ class LadderSolveTests(unittest.TestCase):
         self.assertFalse(_close(value, (0, 0, 1000, 1000), (50000, 0, 51000, 1000)))
 
 
+class PreferCompactTests(unittest.TestCase):
+    """A spread solve is run once more from the heuristic layout, and the cheaper answer stands."""
+
+    def run_rule(self, first, second, heuristic_price=100.0, heuristic=True):
+        from backend.schematic import ladder_solve as module
+        calls = []
+        results = {"first": first, "second": second}
+
+        def price(plan, symbols, nets, placements):
+            return heuristic_price if placements is not results["first"].placements and placements is not results["second"].placements                 else placements.stats[0]
+
+        def measured(plan, symbols, nets, placements):
+            return placements.stats
+
+        def again(start):
+            calls.append(start)
+            return results["second"]
+        with patch.object(module, "_seed_price", price), patch.object(module, "_price_and_extent", measured):
+            chosen = module.prefer_compact(None, [], [], results["first"], {"A": 1} if heuristic else None, again)
+        return chosen, calls
+
+    @staticmethod
+    def result(price, extent, largest, widths, status="cp-sat"):
+        return Data(placements=Data(stats=(price, extent, largest, widths)), status=status)
+
+    def test_a_compact_solve_is_kept_and_not_solved_again(self):
+        first = self.result(120.0, 200.0, 100.0, 100.0)
+        chosen, calls = self.run_rule(first, self.result(10.0, 10.0, 10.0, 100.0))
+        self.assertIs(chosen, first)
+        self.assertEqual(calls, [])
+
+    def test_a_price_far_above_the_heuristics_solves_again_and_keeps_the_cheaper(self):
+        first, second = self.result(400.0, 200.0, 100.0, 100.0), self.result(150.0, 200.0, 100.0, 100.0)
+        chosen, calls = self.run_rule(first, second)
+        self.assertEqual(calls, [{"A": 1}])
+        self.assertIs(chosen.placements, second.placements)
+        self.assertIn("heuristic hint", chosen.status)
+
+    def test_an_extent_far_above_the_bodies_widths_solves_again(self):
+        first = self.result(100.0, 1000.0, 100.0, 100.0)
+        _chosen, calls = self.run_rule(first, self.result(500.0, 100.0, 100.0, 100.0))
+        self.assertEqual(len(calls), 1)
+
+    def test_a_dearer_second_solve_is_not_taken(self):
+        first = self.result(400.0, 200.0, 100.0, 100.0)
+        chosen, _ = self.run_rule(first, self.result(900.0, 200.0, 100.0, 100.0))
+        self.assertIs(chosen, first)
+
+    def test_a_placement_beyond_the_move_limit_is_never_preferred_to_one_within_it(self):
+        first = self.result(100.0, 4000.0, 2014.0, 100.0)
+        second = self.result(900.0, 200.0, 100.0, 100.0)
+        chosen, _ = self.run_rule(first, second)
+        self.assertIs(chosen.placements, second.placements)
+
+    def test_without_a_heuristic_layout_the_solve_stands(self):
+        first = self.result(900.0, 9000.0, 3000.0, 100.0)
+        chosen, calls = self.run_rule(first, first, heuristic=False)
+        self.assertIs(chosen, first)
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

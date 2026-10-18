@@ -264,23 +264,33 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
         # the heuristic placer's layout of the same plan can be the solver's starting hint (never a constraint)
         hint = heuristic if os.environ.get(HINT_ENV, "") == "heuristic" and heuristic else None
         seeds = tuple(int(v) for v in os.environ.get(SEEDS_ENV, "").replace(",", " ").split()) or None
-        # an answer the solver already gave to these very inputs (and this very code) is read back, not solved again
-        cache_name = None
-        if placement_cache.enabled():
-            try:
-                cache_name = placement_cache.key(plan, widened, nets, gap_mm=2.54, pitch_mm=7.62, hint=hint, seeds=seeds,
-                                                 budget=getattr(ladder_solve, "_SOLVER_DETERMINISTIC_TIME", 0.0))
-            except Exception:           # stand-in inputs (a test's) have no key: they are solved
-                cache_name = None
-        cached = placement_cache.load(cache_name) if cache_name else None
-        if cached is None and os.environ.get(placement_cache.CACHE_ONLY_ENV) == "1":
-            raise RuntimeError(placement_cache.MISS)       # a probe: is this sheet's answer stored? (scripts/ci/check_all.py)
-        if cached is not None:
-            result = SimpleNamespace(placements=cached, status=cached.status)
-        else:
-            result = ladder_solve.legalise_with_status(plan, widened, nets, hint=hint, seeds=seeds)
+        def solved_with(start):
+            """The solver's answer for this plan from ``start`` (a hint or None): one it already gave to these very inputs
+            (and this very code) is read back, not solved again."""
+            cache_name = None
+            if placement_cache.enabled():
+                try:
+                    cache_name = placement_cache.key(plan, widened, nets, gap_mm=2.54, pitch_mm=7.62, hint=start, seeds=seeds,
+                                                     budget=getattr(ladder_solve, "_SOLVER_DETERMINISTIC_TIME", 0.0))
+                except Exception:           # stand-in inputs (a test's) have no key: they are solved
+                    cache_name = None
+            cached = placement_cache.load(cache_name) if cache_name else None
+            if cached is None and os.environ.get(placement_cache.CACHE_ONLY_ENV) == "1":
+                raise RuntimeError(placement_cache.MISS)       # a probe: is this sheet's answer stored? (scripts/ci/check_all.py)
+            if cached is not None:
+                return SimpleNamespace(placements=cached, status=cached.status), True
+            found = ladder_solve.legalise_with_status(plan, widened, nets, hint=start, seeds=seeds)
             if cache_name:
-                placement_cache.store(cache_name, result.placements, result.status)
+                placement_cache.store(cache_name, found.placements, found.status)
+            return found, False
+
+        result, from_cache = solved_with(hint)
+        cached = True if from_cache else None
+        if hint is None and heuristic and hasattr(ladder_solve, "prefer_compact"):
+            # a spread solve is run once more from the heuristic layout, and the cheaper answer stands
+            chosen = ladder_solve.prefer_compact(plan, widened, nets, result, heuristic, lambda start: solved_with(start)[0])
+            if chosen is not result:
+                result, cached = chosen, None
         # The solver's own clocks (model build, feasibility, optimisation; its deterministic time), so the note tells
         # the solve's cost even when the harness runs several placements at once in one process.
         timing = getattr(result.placements, "timing", None) or {}

@@ -2281,3 +2281,59 @@ class LadderResult(NamedTuple):
 def legalise_with_status(plan, symbols, nets, *, gap_mm=2.54, pitch_mm=7.62, hint=None, seeds=None):
     placements = legalise(plan, symbols, nets, gap_mm=gap_mm, pitch_mm=pitch_mm, hint=hint, seeds=seeds)
     return LadderResult(placements, placements.status)
+
+
+# A placement the solver left spread out: parts connected only by power nets carry no wire cost (an open item: nothing but the
+# weak extent term pulls their groups together), and a solve that stops at its limit keeps its cheap starting layout.
+_SPREAD_PRICE_RATIO = 1.5       # the solved price above this times the heuristic layout's price: spread
+_SPREAD_EXTENT_RATIO = 3.0      # the extent (width + height) above this times the sum of the placed bodies' widths: spread
+MOVE_LIMIT_MM = 2000.0          # the move tool's bound on a coordinate: a placement beyond it cannot be drawn
+
+
+def _price_and_extent(plan, symbols, nets, placements):
+    """(``_seed_price``, extent width + height, largest coordinate, sum of the placed bodies' widths) of a placement."""
+    price = _seed_price(plan, symbols, nets, placements)
+    by_ref = {s.reference: s for s in symbols}
+    xs, ys, widths = [], [], 0.0
+    for ref, place in placements.items():
+        symbol = by_ref.get(ref)
+        if symbol is None or place.orientation not in symbol.geometry:
+            continue
+        left, top, right, bottom = symbol.geometry[place.orientation].box
+        xs += [place.position[0] + left, place.position[0] + right]
+        ys += [place.position[1] + top, place.position[1] + bottom]
+        widths += right - left
+    extent = (max(xs) - min(xs) + max(ys) - min(ys)) if xs else 0.0
+    largest = max((abs(v) for place in placements.values() for v in place.position), default=0.0)
+    return price, extent, largest, widths
+
+
+def prefer_compact(plan, symbols, nets, solved, heuristic, solve_with_hint):
+    """``solved`` (a ``LadderResult``) unless it is spread out; then one more solve started from ``heuristic`` (the heuristic
+    placer's layout of the same plan) and the cheaper of the two, one within the move limit before one beyond it.
+
+    Spread: the price (``_seed_price``) above ``_SPREAD_PRICE_RATIO`` times the heuristic layout's, or the extent above
+    ``_SPREAD_EXTENT_RATIO`` times the sum of the placed bodies' widths (so no bound is a fixed number), or a coordinate
+    beyond ``MOVE_LIMIT_MM``. Without a heuristic layout, or when the second solve fails, ``solved`` stands. Power-only
+    connections carry no wire cost; that is the cause this rule works round, not one it removes."""
+    if not heuristic:
+        return solved
+    try:
+        price, extent, largest, widths = _price_and_extent(plan, symbols, nets, solved.placements)
+        reference = _seed_price(plan, symbols, nets, Placements(heuristic))
+    except Exception:
+        return solved
+    spread = (largest > MOVE_LIMIT_MM or extent > _SPREAD_EXTENT_RATIO * widths
+              or (reference is not None and price > _SPREAD_PRICE_RATIO * reference))
+    if not spread:
+        return solved
+    try:
+        again = solve_with_hint(heuristic)
+        again_price, _extent, again_largest, _widths = _price_and_extent(plan, symbols, nets, again.placements)
+    except Exception:
+        return solved
+    first = (largest > MOVE_LIMIT_MM, price, 0)
+    second = (again_largest > MOVE_LIMIT_MM, again_price, 1)
+    if min(first, second) is first:
+        return solved
+    return LadderResult(again.placements, f"{again.status} [heuristic hint after a spread solve]")
