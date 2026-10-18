@@ -4,8 +4,14 @@
   "known_failure": "TOOL_EXECUTION_FAILED: No unobstructed power terminal exit from Q2.1 at (162.56, 148.59) for net GND; reposition its source or nearby geometry (No unobstructed "
  },
  "corpus_bms_supply": {
-  "built": false,
-  "known_failure": "TOOL_EXECUTION_FAILED: libavoid route intersects symbol body: EN:TP5.1->U3.2 crosses TP5 on (48.26, 29.21)->(55.88, 29.21) (after 1 reroute, 0 diagonal repairs)"
+  "built": true,
+  "corners": 10,
+  "crossings": 0,
+  "field_collisions": 5,
+  "netlist": "PASS",
+  "shorts": 0,
+  "throughs": 0,
+  "wire_mm": 233.68
  },
  "corpus_gamma_preamp": {
   "built": false,
@@ -46,18 +52,24 @@
   "wire_mm": 226.06
  },
  "corpus_tally_power": {
-  "built": false,
-  "known_failure": "Schematic connectivity gate failed: Connectivity smells suggest the schematic is not ready for PCB or release work. | \"Isolated footprint symbols: 0\", ; \"Hierar"
- },
- "corpus_tally_timecode": {
   "built": true,
-  "corners": 14,
-  "crossings": 3,
+  "corners": 16,
+  "crossings": 1,
   "field_collisions": 0,
   "netlist": "PASS",
   "shorts": 0,
+  "throughs": 1,
+  "wire_mm": 293.37
+ },
+ "corpus_tally_timecode": {
+  "built": true,
+  "corners": 17,
+  "crossings": 3,
+  "field_collisions": 1,
+  "netlist": "PASS",
+  "shorts": 0,
   "throughs": 0,
-  "wire_mm": 349.25
+  "wire_mm": 393.7
  },
  "corpus_uno_r4_power": {
   "built": false,
