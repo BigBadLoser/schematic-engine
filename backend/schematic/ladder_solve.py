@@ -798,7 +798,7 @@ def _solve(plan, symbols, nets, gap_mm, pitch_mm, diagnose, anchors=None, learne
         if len(geoms[ref].pins) == 1 and hang.side in ("below", "above") and abs(normal[0]) > .5 and abs(normal[1]) < .5:
             # A tap (a one-pin part) on a sideways host pin: the net is that one wire, which the router draws from the pin
             # along its row. A tap whose tip is off that row stands clear of it (a grid each side), not across the corridor.
-            reach = 100 * _GRID
+            reach = 10 * _GRID
             left, right = (host_x, host_x + reach) if normal[0] > 0 else (host_x - reach, host_x)
             level = model.NewBoolVar(f"hang level:{ref}")           # the tip on the host's row: the wire is that row's own
             model.Add(py == host_y).OnlyEnforceIf(level)
