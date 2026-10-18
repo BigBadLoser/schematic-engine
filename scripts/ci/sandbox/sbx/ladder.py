@@ -273,6 +273,8 @@ def _placements(widened: list[Any], nets: list[Any], intent: Any, roles: Any,
             except Exception:           # stand-in inputs (a test's) have no key: they are solved
                 cache_name = None
         cached = placement_cache.load(cache_name) if cache_name else None
+        if cached is None and os.environ.get(placement_cache.CACHE_ONLY_ENV) == "1":
+            raise RuntimeError(placement_cache.MISS)       # a probe: is this sheet's answer stored? (scripts/ci/check_all.py)
         if cached is not None:
             result = SimpleNamespace(placements=cached, status=cached.status)
         else:

@@ -17,6 +17,8 @@ from typing import Any
 from . import env
 
 CACHE_ENV = "KICAD_AI_LADDER_CACHE"
+CACHE_ONLY_ENV = "KICAD_AI_LADDER_CACHE_ONLY"      # "1": a miss is an error (cache miss), not a solve: asks whether an answer is stored
+MISS = "cache miss"
 SOURCES = ("backend/schematic/ladder_solve.py", "backend/schematic/ladder_plan.py", "backend/schematic/placement_refinement.py")
 
 
